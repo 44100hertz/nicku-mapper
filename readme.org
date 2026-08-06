@@ -73,8 +73,10 @@ levels: zero edges shared by >2 triangles (no crossing/overlapping faces),
 and the floor tiles triangulate exactly (2.24-unit tiles -> 10419 raw^2
 triangles). The earlier "split at jumps > 270" heuristic was wrong (it
 broke the road, whose segments are 288-290 raw units apart); the strip is
-un-split. Still open: the C-block walkmesh face semantics, the secondary
-data after each vertex run (=? texture coords), and the main.dol was set up
+un-split. Still open: the C-block walkmesh face semantics, and the texture pipeline —
+the .ttl files hold the textures (TGA-named entries, raw pixel data) and the
+chunks hold UV arrays, but the UV count mapping and the texture format are
+unsolved (see asset-extract/docs/trb-format-notes.md §10). The main.dol was set up
 in Ghidra (GX library located at 0x80006xxx..0x8003Exxx) but its
 mesh-parsing code is reachable only through function-pointer tables and
 was not pinned statically — see asset-extract/docs/trb-format-notes.md §7
