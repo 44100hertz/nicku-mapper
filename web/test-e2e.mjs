@@ -282,23 +282,46 @@ await evaluate(`(() => {
 })()`);
 await sleep(200);
 
-// Mesh faces: separate toggle, default off, grouped under the mesh group
+// Mesh faces: solid strip faces, on by default; lines overlay off by default
 const faces = await evaluate(`({
   visible: window.__nickmapper.meshFacesVisible(),
   cb: document.getElementById("tog-faces").checked,
 })`);
 console.log("faces:", JSON.stringify(faces));
-if (faces.cb !== false) throw new Error("faces toggle should default unchecked");
+if (faces.cb !== true) throw new Error("faces toggle should default checked");
+if (faces.visible !== true) throw new Error("faces not visible by default");
+await evaluate(`(() => {
+  const cb = document.getElementById("tog-faces");
+  cb.checked = false;
+  cb.dispatchEvent(new Event("change"));
+})()`);
+await sleep(200);
+if ((await evaluate(`window.__nickmapper.meshFacesVisible()`)) !== false)
+  throw new Error("faces toggle failed");
 await evaluate(`(() => {
   const cb = document.getElementById("tog-faces");
   cb.checked = true;
   cb.dispatchEvent(new Event("change"));
 })()`);
 await sleep(200);
-if ((await evaluate(`window.__nickmapper.meshFacesVisible()`)) !== true)
-  throw new Error("faces toggle failed");
+
+// Mesh lines: optional wireframe overlay, off by default
+const linesCb = await evaluate(`({
+  cb: document.getElementById("tog-lines").checked,
+  visible: window.__nickmapper.meshLinesVisible(),
+})`);
+console.log("lines:", JSON.stringify(linesCb));
+if (linesCb.cb !== false) throw new Error("lines toggle should default unchecked");
 await evaluate(`(() => {
-  const cb = document.getElementById("tog-faces");
+  const cb = document.getElementById("tog-lines");
+  cb.checked = true;
+  cb.dispatchEvent(new Event("change"));
+})()`);
+await sleep(200);
+if ((await evaluate(`window.__nickmapper.meshLinesVisible()`)) !== true)
+  throw new Error("lines toggle failed");
+await evaluate(`(() => {
+  const cb = document.getElementById("tog-lines");
   cb.checked = false;
   cb.dispatchEvent(new Event("change"));
 })()`);

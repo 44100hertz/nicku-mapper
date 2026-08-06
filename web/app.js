@@ -29,6 +29,7 @@ const tog = {
   paths: $("tog-paths"),
   collision: $("tog-collision"),
   faces: $("tog-faces"),
+  lines: $("tog-lines"),
   grid: $("tog-grid"),
   yBottom: $("tog-ybottom"),
 };
@@ -463,7 +464,7 @@ async function loadLevel(dir) {
     const coll = (await loadCollision(dir)) || null;
     const meshTxt =
       coll && coll.verts
-        ? ` · ${coll.verts} mesh verts${coll.segments ? ` · ${coll.segments} segments` : ""}${coll.faces ? ` · ${coll.faces} faces (off)` : ""}`
+        ? ` · ${coll.verts} mesh verts · ${coll.faces} faces${coll.segments ? ` · ${coll.segments} segments` : ""}`
         : "";
     frameCamera();
     buildLegend();
@@ -545,20 +546,21 @@ $("btn-hide-all").addEventListener("click", () => {
 // carries verts = raw (x, z, y) s16 fixed-point triples at 1/64 scale
 // (data.div). The raw y is +y DOWN (game-native; entities are +y up), so in
 // the viewer convention (x, -y, -z) the display position is
-// (x/div, y/div, -z/div) — the y flips cancel. Consecutive-run line segments
-// are exact (same emit order as the OBJ writer's `l` lines, minus cross-level
-// jumps); the triangle-strip faces use the same "split at jumps > 270 raw
-// units" heuristic as the OBJ writer's --faces, so they are approximate
-// (default off).
+// (x/div, y/div, -z/div) — the y flips cancel. Each mesh renders as ONE
+// triangle strip (GX_TRIANGLESTRIP): consecutive triples tile the geometry
+// and the zero-area triangles are the engine's strip-restart markers. The
+// solid faces are exact; the optional line overlay draws consecutive-run
+// edges split at large jumps so the long strip diagonals stay hidden.
 const MESH_COLORS = [
   [0.45, 0.62, 0.8], [0.85, 0.5, 0.25], [0.4, 0.8, 0.5], [0.9, 0.7, 0.3],
   [0.6, 0.45, 0.9], [0.3, 0.75, 0.85], [0.85, 0.45, 0.55], [0.7, 0.8, 0.4],
 ];
-const MESH_STRIP_GAP = 270; // raw units, same as trb_mesh.py STRIP_GAP
+const MESH_STRIP_GAP = 270; // raw units; line overlay split threshold
 
 const meshFacesGroup = new THREE.Group();
-meshFacesGroup.visible = false;
+const meshLinesGroup = new THREE.Group();
 collisionGroup.add(meshFacesGroup);
+collisionGroup.add(meshLinesGroup);
 
 async function loadCollision(dir) {
   const res = await fetch(`./collision/${dir}.json`);
@@ -605,7 +607,8 @@ function loadMeshV2(data) {
         const dz = v[(i - 1) * 3 + 2] - v[i * 3 + 2];
         jump[i] = dx * dx + dy * dy + dz * dz > gap2 ? 1 : 0;
       }
-      // exact consecutive-run line segments
+      // exact consecutive-run line segments (split at large jumps so the
+      // wireframe stays clean — the long strip diagonals are hidden by faces)
       for (let i = 1; i < n; i++) {
         if (jump[i]) continue;
         segVerts.push(
@@ -614,25 +617,21 @@ function loadMeshV2(data) {
         );
         segColors.push(col[0], col[1], col[2], col[0], col[1], col[2]);
       }
-      // heuristic triangle strips (mirrors trb_mesh.py strip_runs)
+      // faces: ONE un-split triangle strip per mesh (the engine's primitive
+      // — GX_TRIANGLESTRIP). Consecutive triples tile the floors/walls;
+      // the zero-area triangles are the strip-restart markers and render as
+      // nothing. Winding alternates per triangle (strip convention).
       const fbase = facePos.length / 3;
       for (let i = 0; i < n; i++) {
         facePos.push(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
         faceColor.push(col[0], col[1], col[2]);
       }
-      let runStart = 0;
-      for (let i = 1; i <= n; i++) {
-        if (i === n || jump[i]) {
-          const len = i - runStart;
-          for (let t = 0; t < len - 2; t++) {
-            const a = fbase + runStart + t;
-            const b = fbase + runStart + t + 1;
-            const c = fbase + runStart + t + 2;
-            if (t % 2) faceIdx.push(b, a, c);
-            else faceIdx.push(a, b, c);
-          }
-          runStart = i;
-        }
+      for (let i = 0; i < n - 2; i++) {
+        const a = fbase + i;
+        const b = fbase + i + 1;
+        const c = fbase + i + 2;
+        if (i % 2) faceIdx.push(b, a, c);
+        else faceIdx.push(a, b, c);
       }
       meshIdx++;
     }
@@ -645,8 +644,8 @@ function loadMeshV2(data) {
       geo,
       new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85 })
     );
-    lines.userData = { type: "mesh-collision" };
-    collisionGroup.add(lines);
+    lines.userData = { type: "mesh-lines" };
+    meshLinesGroup.add(lines);
     state.collisionLines.push(lines);
   }
   let faceCount = 0;
@@ -659,10 +658,8 @@ function loadMeshV2(data) {
       geo,
       new THREE.MeshBasicMaterial({
         vertexColors: true,
-        transparent: true,
-        opacity: 0.35,
         side: THREE.DoubleSide,
-        depthWrite: false,
+        depthWrite: true,
       })
     );
     mesh.userData = { type: "mesh-faces" };
@@ -684,6 +681,7 @@ function applyToggles() {
 
   collisionGroup.visible = showCollision;
   meshFacesGroup.visible = tog.faces.checked;
+  meshLinesGroup.visible = tog.lines.checked;
 
   for (const [type, meshes] of state.typeMeshes) {
     const visible = !state.hiddenTypes.has(type);
@@ -706,7 +704,7 @@ function applyToggles() {
 }
 
 // View toggles
-for (const id of ["tog-points", "tog-links", "tog-paths", "tog-collision", "tog-faces", "tog-grid"]) {
+for (const id of ["tog-points", "tog-links", "tog-paths", "tog-collision", "tog-faces", "tog-lines", "tog-grid"]) {
   $(id).addEventListener("change", applyToggles);
 }
 
@@ -958,6 +956,7 @@ window.__nickmapper = {
   collisionParented: () => collisionGroup.parent === scene,
   collisionLineCount: () => state.collisionLines.length,
   meshFacesVisible: () => meshFacesGroup.visible,
+  meshLinesVisible: () => meshLinesGroup.visible,
   pickAt: (x, y) => {
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.x = ((x - rect.left) / rect.width) * 2 - 1;

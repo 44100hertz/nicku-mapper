@@ -32,12 +32,13 @@ Deep-link to a level with a hash: /web/#SpongeBobLevel2
 
 ** Collision / mesh geometry
 Level geometry is extracted from the GameCube disc (TRB container, Toshi
-engine) into web/collision/<level>.json and rendered as per-mesh display
-meshes: exact consecutive-run line segments (colors cycle by mesh index)
-plus optional heuristic triangle-strip faces. Controls: the "Mesh geometry"
-toggle shows/hides the whole group; "Mesh faces (approx)" adds the
-heuristic strips (default off — the lines are exact, the faces are
-invented from the strip-split heuristic).
+engine) into web/collision/<level>.json and rendered as SOLID meshes —
+each mesh is one triangle strip (GX_TRIANGLESTRIP): consecutive triples
+tile the geometry and the zero-area triangles are the engine's strip-
+restart markers. Colors cycle by mesh index. Controls: "Mesh geometry"
+shows/hides the group, "Mesh faces (solid)" the surfaces (default on),
+"Mesh lines (wireframe)" overlays the exact consecutive-run edges (split
+at large jumps so the long strip diagonals stay hidden).
 
 Re-extract with:
 
@@ -66,10 +67,14 @@ improves — entities stand on the geometry (part 01's original 82% check was
 sign-blind: its floors sit at y=0). The container, RELC pointer map and
 52-byte records are fully decoded (see asset-extract/docs/trb-format-notes.md).
 
-Still open (honestly): the exact face topology of the vertex runs (strip
-vs quad list) is inferred, so the viewer draws exact line segments and
-optional heuristic faces rather than guaranteed-correct surfaces. The
-C-block grids' face semantics are also inferred. The main.dol was set up
+Topology status: SOLVED (this session) — each per-mesh vertex run is one
+GX triangle strip. Verified on 1,619 meshes / 118k triangles across two
+levels: zero edges shared by >2 triangles (no crossing/overlapping faces),
+and the floor tiles triangulate exactly (2.24-unit tiles -> 10419 raw^2
+triangles). The earlier "split at jumps > 270" heuristic was wrong (it
+broke the road, whose segments are 288-290 raw units apart); the strip is
+un-split. Still open: the C-block walkmesh face semantics, the secondary
+data after each vertex run (=? texture coords), and the main.dol was set up
 in Ghidra (GX library located at 0x80006xxx..0x8003Exxx) but its
 mesh-parsing code is reachable only through function-pointer tables and
 was not pinned statically — see asset-extract/docs/trb-format-notes.md §7
