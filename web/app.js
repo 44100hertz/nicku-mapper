@@ -28,6 +28,7 @@ const tog = {
   links: $("tog-links"),
   paths: $("tog-paths"),
   collision: $("tog-collision"),
+  faces: $("tog-faces"),
   grid: $("tog-grid"),
   yBottom: $("tog-ybottom"),
 };
@@ -459,9 +460,11 @@ async function loadLevel(dir) {
     const linksDrawn = addLinks(entities);
     const pathSegs = addPaths(entities);
     addLabels(entities);
-    const coll = (await loadCollision(dir)) || 0;
-    const wallCount = typeof coll === "number" ? coll : coll.points || 0;
-    const meshLines = typeof coll === "number" ? 0 : coll.lines || 0;
+    const coll = (await loadCollision(dir)) || null;
+    const meshTxt =
+      coll && coll.verts
+        ? ` · ${coll.verts} mesh verts${coll.segments ? ` · ${coll.segments} segments` : ""}${coll.faces ? ` · ${coll.faces} faces (off)` : ""}`
+        : "";
     frameCamera();
     buildLegend();
     applyToggles();
@@ -470,7 +473,7 @@ async function loadLevel(dir) {
     const points = entities.length - boxes;
     statusEl.textContent =
       `${dir} — ${entities.length} entities · ${boxes} boxes · ${points} points · ` +
-      `${linksDrawn} links · ${pathSegs} path segments · ${wallCount} mesh points${meshLines ? ` + ${meshLines} grid lines` : ""} · ` +
+      `${linksDrawn} links · ${pathSegs} path segments${meshTxt} · ` +
       `${state.missingLinks} unresolved names · ` +
       `bounds ${state.bounds.size.x.toFixed(0)}×${state.bounds.size.y.toFixed(0)}×${state.bounds.size.z.toFixed(0)}`;
   } catch (err) {
@@ -536,167 +539,139 @@ $("btn-hide-all").addEventListener("click", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Collision / mesh geometry (from trb_mesh.py -> web/collision/<level>.json)
+// Collision / mesh geometry (from trb_mesh.py --web -> web/collision/<level>.json)
 // ---------------------------------------------------------------------------
-// mesh-v1 format (correct interpretation): per-mesh C-block u8 position triples,
-// x/z quantized to the mesh record bounds, y = b * yScale. Rendered as points.
+// mesh-v2 format (current): per-mesh display-mesh vertex runs. Each mesh
+// carries verts = raw (x, z, y) s16 fixed-point triples at 1/64 scale
+// (data.div). The raw y is +y DOWN (game-native; entities are +y up), so in
+// the viewer convention (x, -y, -z) the display position is
+// (x/div, y/div, -z/div) — the y flips cancel. Consecutive-run line segments
+// are exact (same emit order as the OBJ writer's `l` lines, minus cross-level
+// jumps); the triangle-strip faces use the same "split at jumps > 270 raw
+// units" heuristic as the OBJ writer's --faces, so they are approximate
+// (default off).
 const MESH_COLORS = [
   [0.45, 0.62, 0.8], [0.85, 0.5, 0.25], [0.4, 0.8, 0.5], [0.9, 0.7, 0.3],
   [0.6, 0.45, 0.9], [0.3, 0.75, 0.85], [0.85, 0.45, 0.55], [0.7, 0.8, 0.4],
 ];
+const MESH_STRIP_GAP = 270; // raw units, same as trb_mesh.py STRIP_GAP
+
+const meshFacesGroup = new THREE.Group();
+meshFacesGroup.visible = false;
+collisionGroup.add(meshFacesGroup);
 
 async function loadCollision(dir) {
   const res = await fetch(`./collision/${dir}.json`);
   if (!res.ok) return null;
   const data = await res.json();
-
-  if (data.format === "mesh-v1") return loadMeshV1(data);
-  return loadLegacyWalls(data);
+  if (data.format === "mesh-v2") return loadMeshV2(data);
+  return null;
 }
 
-// Mesh geometry (mesh-v1): per-mesh quantized grid points, drawn as points
-// AND as grid-adjacent connection lines so the road/path topology is visible.
-// The C-block triples are (a, b, c) grid coords: x = x0 + a*(x1-x0)/amax,
-// z = z0 + c*(z1-z0)/cmax, y = b*yScale (see trb-format-notes.md).
-function loadMeshV1(data) {
-  const yScale = data.yScale || 0.125;
-  const verts = [];
-  const colors = [];
-  const lineVerts = [];
-  const lineColors = [];
-  const tmp = new THREE.Vector3();
+function loadMeshV2(data) {
+  const div = data.div || 64;
+  const segVerts = [];
+  const segColors = [];
+  const facePos = [];
+  const faceColor = [];
+  const faceIdx = [];
+  let vertTotal = 0;
   let meshIdx = 0;
+  const gap2 = MESH_STRIP_GAP * MESH_STRIP_GAP;
   for (const part of data.parts || []) {
     for (const m of part.meshes || []) {
-      const [x0, x1, z0, z1] = m.bounds || [0, 1, 0, 1];
-      const g = m.grid || [];
-      if (!g.length) {
+      const v = m.verts || [];
+      const n = v.length / 3;
+      if (n < 2) {
         meshIdx++;
         continue;
       }
-      let amax = 1, cmax = 1;
-      for (const t of g) {
-        if (t[0] > amax) amax = t[0];
-        if (t[2] > cmax) cmax = t[2];
-      }
       const col = MESH_COLORS[meshIdx % MESH_COLORS.length];
-      const gridPos = new Map();
-      for (const t of g) {
-        const x = x0 + (t[0] * (x1 - x0)) / amax;
-        const z = z0 + (t[2] * (z1 - z0)) / cmax;
-        const y = t[1] * yScale;
-        tmp.set(x, -y, -z); // viewer convention (x, -y, -z)
-        verts.push(tmp.x, tmp.y, tmp.z);
-        colors.push(col[0], col[1], col[2]);
-        const key = t[0] * 4096 + t[2];
-        if (!gridPos.has(key)) gridPos.set(key, { x: tmp.x, y: tmp.y, z: tmp.z });
+      vertTotal += n;
+      // world positions in the viewer convention (x, -y, -z): the raw
+      // triple (x, z, y) is +y DOWN (game-native), so world-up y = -y/div
+      // and the viewer's y-flip cancels it: display = (x/div, y/div, -z/div).
+      const pos = new Float32Array(n * 3);
+      for (let i = 0, j = 0; i < v.length; i += 3, j += 3) {
+        pos[j] = v[i] / div;
+        pos[j + 1] = v[i + 2] / div;
+        pos[j + 2] = -v[i + 1] / div;
       }
-      // connect points that are adjacent in grid space (Chebyshev distance 1)
-      const pts = [...gridPos.values()];
-      const keyOf = (a, c) => a * 4096 + c;
-      for (const [key, p] of gridPos) {
-        const a = Math.floor(key / 4096), c = key % 4096;
-        for (const [da, dc] of [[1, 0], [0, 1], [1, 1], [1, -1]]) {
-          const q = gridPos.get(keyOf(a + da, c + dc));
-          if (q) {
-            lineVerts.push(p.x, p.y, p.z, q.x, q.y, q.z);
-            lineColors.push(col[0], col[1], col[2], col[0], col[1], col[2]);
+      // jump[i] = the gap between vertices i-1 and i exceeds the strip gap
+      const jump = new Uint8Array(n);
+      for (let i = 1; i < n; i++) {
+        const dx = v[(i - 1) * 3] - v[i * 3];
+        const dy = v[(i - 1) * 3 + 1] - v[i * 3 + 1];
+        const dz = v[(i - 1) * 3 + 2] - v[i * 3 + 2];
+        jump[i] = dx * dx + dy * dy + dz * dz > gap2 ? 1 : 0;
+      }
+      // exact consecutive-run line segments
+      for (let i = 1; i < n; i++) {
+        if (jump[i]) continue;
+        segVerts.push(
+          pos[(i - 1) * 3], pos[(i - 1) * 3 + 1], pos[(i - 1) * 3 + 2],
+          pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]
+        );
+        segColors.push(col[0], col[1], col[2], col[0], col[1], col[2]);
+      }
+      // heuristic triangle strips (mirrors trb_mesh.py strip_runs)
+      const fbase = facePos.length / 3;
+      for (let i = 0; i < n; i++) {
+        facePos.push(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
+        faceColor.push(col[0], col[1], col[2]);
+      }
+      let runStart = 0;
+      for (let i = 1; i <= n; i++) {
+        if (i === n || jump[i]) {
+          const len = i - runStart;
+          for (let t = 0; t < len - 2; t++) {
+            const a = fbase + runStart + t;
+            const b = fbase + runStart + t + 1;
+            const c = fbase + runStart + t + 2;
+            if (t % 2) faceIdx.push(b, a, c);
+            else faceIdx.push(a, b, c);
           }
+          runStart = i;
         }
       }
       meshIdx++;
     }
   }
-  if (!verts.length) return 0;
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
-  geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-  const pts = new THREE.Points(
-    geo,
-    new THREE.PointsMaterial({
-      size: 0.25,
-      sizeAttenuation: true,
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.9,
-    })
-  );
-  pts.userData = { type: "mesh-collision", meshCount: meshIdx };
-  collisionGroup.add(pts);
-  state.collisionLines.push(pts);
-  let lineCount = 0;
-  if (lineVerts.length) {
-    const lgeo = new THREE.BufferGeometry();
-    lgeo.setAttribute("position", new THREE.Float32BufferAttribute(lineVerts, 3));
-    lgeo.setAttribute("color", new THREE.Float32BufferAttribute(lineColors, 3));
+  if (segVerts.length) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(segVerts, 3));
+    geo.setAttribute("color", new THREE.Float32BufferAttribute(segColors, 3));
     const lines = new THREE.LineSegments(
-      lgeo,
-      new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.55 })
+      geo,
+      new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85 })
     );
     lines.userData = { type: "mesh-collision" };
     collisionGroup.add(lines);
     state.collisionLines.push(lines);
-    lineCount = lineVerts.length / 6;
   }
-  return { points: verts.length / 3, lines: lineCount };
-}
-
-// Legacy 5-byte wall columns (superseded; kept for old JSON files).
-const WALL_COLORS = {
-  0: [0.45, 0.62, 0.8], // solid walls
-  1: [0.85, 0.5, 0.25], // boundary / secondary
-};
-function loadLegacyWalls(data) {
-  const ox = data.ox || 0;
-  const verts = [];
-  const colors = [];
-  const tmpV = new THREE.Vector3();
-  const tmpM = new THREE.Matrix4();
-  for (const part of data.parts) {
-    for (const w of part.walls) {
-      const F = w[0], X = w[1], Z = w[2], Y1 = w[3], Y2 = w[4];
-      const a = Math.min(Y1, Y2), b = Math.max(Y1, Y2);
-      tmpM.compose(
-        new THREE.Vector3(X - ox, -(a + b) / 2, -Z),
-        new THREE.Quaternion(),
-        new THREE.Vector3(1, Math.max(b - a, 1), 1)
-      );
-      const col = WALL_COLORS[F] || WALL_COLORS[0];
-      for (let k = 0; k < unitEdgeVerts.length; k += 3) {
-        tmpV.set(unitEdgeVerts[k], unitEdgeVerts[k + 1], unitEdgeVerts[k + 2]).applyMatrix4(tmpM);
-        verts.push(tmpV.x, tmpV.y, tmpV.z);
-        colors.push(col[0], col[1], col[2]);
-      }
-    }
+  let faceCount = 0;
+  if (faceIdx.length) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(facePos, 3));
+    geo.setAttribute("color", new THREE.Float32BufferAttribute(faceColor, 3));
+    geo.setIndex(new THREE.Uint32BufferAttribute(faceIdx, 1));
+    const mesh = new THREE.Mesh(
+      geo,
+      new THREE.MeshBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.35,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      })
+    );
+    mesh.userData = { type: "mesh-faces" };
+    meshFacesGroup.add(mesh);
+    state.collisionLines.push(mesh);
+    faceCount = faceIdx.length / 3;
   }
-  if (!verts.length) return 0;
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
-  geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-  const line = new THREE.LineSegments(
-    geo,
-    new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9 })
-  );
-  collisionGroup.add(line);
-  state.collisionLines.push(line);
-  return verts.length / unitEdgeVerts.length; // wall count (legacy)
+  return { verts: vertTotal, segments: segVerts.length / 6, faces: faceCount };
 }
-
-function addMeshWireframe(meshName, positions, indices) {
-  // positions: Float32Array of (x, -y, -z) vertices
-  // indices: Uint16Array of triangle indices from chunk stream
-  if (!positions || !positions.length) return;
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  const wire = new THREE.LineSegments(
-    new THREE.WireframeGeometry(geo),
-    new THREE.LineBasicMaterial({ color: 0x44ccff, transparent: true, opacity: 0.6 })
-  );
-  wire.userData = { meshName, type: "mesh-collision" };
-  collisionGroup.add(wire);
-  state.collisionLines.push(wire);
-}
-
 // ---------------------------------------------------------------------------
 // View toggles
 // ---------------------------------------------------------------------------
@@ -708,6 +683,7 @@ function applyToggles() {
   const showGrid = tog.grid.checked;
 
   collisionGroup.visible = showCollision;
+  meshFacesGroup.visible = tog.faces.checked;
 
   for (const [type, meshes] of state.typeMeshes) {
     const visible = !state.hiddenTypes.has(type);
@@ -730,7 +706,7 @@ function applyToggles() {
 }
 
 // View toggles
-for (const id of ["tog-points", "tog-links", "tog-paths", "tog-collision", "tog-grid"]) {
+for (const id of ["tog-points", "tog-links", "tog-paths", "tog-collision", "tog-faces", "tog-grid"]) {
   $(id).addEventListener("change", applyToggles);
 }
 
@@ -981,6 +957,7 @@ window.__nickmapper = {
   collisionVisible: () => collisionGroup.visible,
   collisionParented: () => collisionGroup.parent === scene,
   collisionLineCount: () => state.collisionLines.length,
+  meshFacesVisible: () => meshFacesGroup.visible,
   pickAt: (x, y) => {
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.x = ((x - rect.left) / rect.width) * 2 - 1;

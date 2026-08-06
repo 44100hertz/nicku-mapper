@@ -32,36 +32,48 @@ Deep-link to a level with a hash: /web/#SpongeBobLevel2
 
 ** Collision / mesh geometry
 Level geometry is extracted from the GameCube disc (TRB container, Toshi
-engine) into web/collision/<level>.json and rendered as a per-mesh point
-cloud PLUS grid-adjacent connection lines (colors cycle by mesh index) with
-a "Mesh geometry" toggle. Run `python3 asset-extract/tools/trb_mesh.py` to
-re-extract (set NICKMAPPER_WEB=$PWD/web/collision if the repo is reached
-through a symlink).
+engine) into web/collision/<level>.json and rendered as per-mesh display
+meshes: exact consecutive-run line segments (colors cycle by mesh index)
+plus optional heuristic triangle-strip faces. Controls: the "Mesh geometry"
+toggle shows/hides the whole group; "Mesh faces (approx)" adds the
+heuristic strips (default off — the lines are exact, the faces are
+invented from the strip-split heuristic).
+
+Re-extract with:
+
+    cd asset-extract && python3 tools/trb_mesh.py --web
+
+(set NICKMAPPER_WEB=$PWD/web/collision if the repo is reached through a
+symlink and the automatic repo-root walk can't find web/index.html). The
+--web export writes the mesh-v2 format: per-mesh raw (x, z, y) s16
+fixed-point vertex runs at 1/64 scale (data.div, yDown — the raw y is +y
+down, game-native; entities are +y up), record centers/radii and format
+flags; the OBJ files (output/mesh/) stay available for offline viewing.
 
 Source: the gcn+wii/extract project's nicku-ntsc/P-GNOE/files/Data/<level>/
-(*_Detail_Level*.trb files). The old 5-byte "wall column" reading was wrong:
-those arrays were NameHash coincidences. The real geometry is mesh-based —
-86+ per-part meshes, each a 52-byte record (bounds, offsets, count, format
-flag) plus a C-block of u8 triples quantized to the record bounds (grid
-coords: x = x0 + a*(x1-x0)/amax, z = z0 + c*(z1-z0)/cmax, y = b/8).
+(*.trb level parts — selection is name-agnostic: any file whose SYMB table
+lists W0C0M meshes, so the DP naming quirks DPWorld_Level01_01.trb /
+DPWorld_Detail_level02_01.trb work). The old 5-byte "wall column" reading
+was wrong: those arrays were NameHash coincidences. The real geometry is
+mesh-based — 86+ per-part meshes, each a 52-byte record (center + radius,
+offsets, count, format flag) plus a C-block of u8 triples quantized to the
+record bounds (the C-block walkmesh is extracted by trb_collision.py).
 
-Verified this session: the road mesh decodes to a flat diagonal slab at y=0
-matching its bounds; the three player spawns from SBL1_Ents.ini sit ON the
-decoded floor (nearest point within 0.08-0.19 units, y=0); mesh heights
-(max b -> b/8) line up with entity platform heights. The container, RELC
-pointer map and 52-byte records are fully decoded (see
-asset-extract/docs/trb-format-notes.md).
+Verified: scale 1/64 confirmed for all level parts (mesh-record centers
+match vertex-run midpoints); with the y sign corrected (file y is +y down)
+the entity overlay jumps from 9% to 37% of in-bbox entities and every part
+improves — entities stand on the geometry (part 01's original 82% check was
+sign-blind: its floors sit at y=0). The container, RELC pointer map and
+52-byte records are fully decoded (see asset-extract/docs/trb-format-notes.md).
 
-Still open (honestly): the per-chunk u16 triplet index streams (posIdx up
-to ~2513, uvIdx ~1697, nrmIdx with -37 hard-edge sentinels) reference pools
-that are not in the level file — the binding is unsolved. The C-blocks'
-exact face topology (quad strip vs grid cells) is inferred, so the viewer
-draws points + grid lines rather than invented faces. Smooth meshes
-(G=0x060302xx) carry s16x3 position arrays in local frames. The main.dol
-was set up in Ghidra (GX library located at 0x80006xxx..0x8003Exxx) but its
-mesh-parsing code is reachable only through function-pointer tables and was
-not pinned statically — see asset-extract/docs/trb-format-notes.md §7 for
-the next steps (dolphin trace / vtable walk).
+Still open (honestly): the exact face topology of the vertex runs (strip
+vs quad list) is inferred, so the viewer draws exact line segments and
+optional heuristic faces rather than guaranteed-correct surfaces. The
+C-block grids' face semantics are also inferred. The main.dol was set up
+in Ghidra (GX library located at 0x80006xxx..0x8003Exxx) but its
+mesh-parsing code is reachable only through function-pointer tables and
+was not pinned statically — see asset-extract/docs/trb-format-notes.md §7
+for the next steps (dolphin trace / vtable walk).
 
 Notes vs the Lua pipeline:
   * parser.js also captures Orientation quaternions so boxes rotate in 3D.

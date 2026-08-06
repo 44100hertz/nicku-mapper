@@ -266,7 +266,7 @@ const coll = await evaluate(`({
 })`);
 console.log("collision:", JSON.stringify(coll));
 if (coll.visible !== true || coll.parented !== true) throw new Error("collision not rendered/parented");
-if (!/mesh points/.test(coll.status)) throw new Error("collision not loaded: " + coll.status);
+if (!/mesh verts/.test(coll.status)) throw new Error("collision not loaded: " + coll.status);
 await evaluate(`(() => {
   const cb = document.getElementById("tog-collision");
   cb.checked = false;
@@ -278,6 +278,28 @@ if ((await evaluate(`window.__nickmapper.collisionVisible()`)) !== false)
 await evaluate(`(() => {
   const cb = document.getElementById("tog-collision");
   cb.checked = true;
+  cb.dispatchEvent(new Event("change"));
+})()`);
+await sleep(200);
+
+// Mesh faces: separate toggle, default off, grouped under the mesh group
+const faces = await evaluate(`({
+  visible: window.__nickmapper.meshFacesVisible(),
+  cb: document.getElementById("tog-faces").checked,
+})`);
+console.log("faces:", JSON.stringify(faces));
+if (faces.cb !== false) throw new Error("faces toggle should default unchecked");
+await evaluate(`(() => {
+  const cb = document.getElementById("tog-faces");
+  cb.checked = true;
+  cb.dispatchEvent(new Event("change"));
+})()`);
+await sleep(200);
+if ((await evaluate(`window.__nickmapper.meshFacesVisible()`)) !== true)
+  throw new Error("faces toggle failed");
+await evaluate(`(() => {
+  const cb = document.getElementById("tog-faces");
+  cb.checked = false;
   cb.dispatchEvent(new Event("change"));
 })()`);
 await sleep(200);

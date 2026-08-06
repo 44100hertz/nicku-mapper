@@ -1,6 +1,13 @@
 #!/usr/bin/env node
-// extract-collision.mjs — extract collision wall data from Nicktoons Unite!
-// (GC) level .trb files and emit per-level JSON for the 3D viewer.
+// extract-collision.mjs — OBSOLETE. The 5-byte "wall column" extraction this
+// script implements was based on a false interpretation: the "wall arrays" it
+// found are NameHash coincidences (0x655A/0x759B/0xCEAD = hashes of
+// SkeletonHeader/Database/Header). The real geometry is mesh-based — use
+// asset-extract/tools/trb_mesh.py instead (writes the same web/collision/
+// directory in the "mesh-v1" format). Kept only for reference.
+//
+// extract collision wall data from Nicktoons Unite! (GC) level .trb files
+// and emit per-level JSON for the 3D viewer.
 //
 // Source data:  /run/media/samp/.../gcn+wii/extract/nicku-ntsc/P-GNOE/files/Data/<level>/
 // Output:       web/collision/<level>.json
