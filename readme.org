@@ -9,6 +9,70 @@ I'll probably make a cleaner implementation in a different lang.
 you'll need AwesomeWM/oocairo, plus luafilesystem.
 should just run then...it should put the maps into out/
 
+** 3D web viewer (the fun one)
+There's also a 3D map viewer with flyaround controls in web/:
+
+    ./run-viewer.sh          # serves the repo root on :8000
+    # then open http://localhost:8000/web/
+
+It parses the Entities.ini files directly in the browser (web/parser.js is a
+port of parser.lua; three.js is vendored in web/vendor/, so it works offline).
+Controls: left-drag to rotate, right-drag to pan, wheel to zoom (toward the
+cursor), click to inspect an entity, double-click to fly to it, and a
+"Jump to Danny" button that flies to the starting character.
+The panel lets you toggle points/links/paths/grid, filter individual entity
+types, and switch "Position.y = box bottom vs center". All boxes render as
+edge outlines (no solid mode) so nothing hides the level; an invisible pick
+proxy keeps them clickable — but hidden types are not clickable. Name labels
+show only for ADanny and APropTriggerEndLevel, unconditionally.
+AMusicTrigger and AWorldSectionVolume start hidden (legend unchecked).
+Game coordinates are +y down and mirrored along z, so the viewer renders
+(x, -y, -z) to match the in-game layout.
+Deep-link to a level with a hash: /web/#SpongeBobLevel2
+
+** Collision / mesh geometry
+Level geometry is extracted from the GameCube disc (TRB container, Toshi
+engine) into web/collision/<level>.json and rendered as a per-mesh point
+cloud PLUS grid-adjacent connection lines (colors cycle by mesh index) with
+a "Mesh geometry" toggle. Run `python3 asset-extract/tools/trb_mesh.py` to
+re-extract (set NICKMAPPER_WEB=$PWD/web/collision if the repo is reached
+through a symlink).
+
+Source: the gcn+wii/extract project's nicku-ntsc/P-GNOE/files/Data/<level>/
+(*_Detail_Level*.trb files). The old 5-byte "wall column" reading was wrong:
+those arrays were NameHash coincidences. The real geometry is mesh-based —
+86+ per-part meshes, each a 52-byte record (bounds, offsets, count, format
+flag) plus a C-block of u8 triples quantized to the record bounds (grid
+coords: x = x0 + a*(x1-x0)/amax, z = z0 + c*(z1-z0)/cmax, y = b/8).
+
+Verified this session: the road mesh decodes to a flat diagonal slab at y=0
+matching its bounds; the three player spawns from SBL1_Ents.ini sit ON the
+decoded floor (nearest point within 0.08-0.19 units, y=0); mesh heights
+(max b -> b/8) line up with entity platform heights. The container, RELC
+pointer map and 52-byte records are fully decoded (see
+asset-extract/docs/trb-format-notes.md).
+
+Still open (honestly): the per-chunk u16 triplet index streams (posIdx up
+to ~2513, uvIdx ~1697, nrmIdx with -37 hard-edge sentinels) reference pools
+that are not in the level file — the binding is unsolved. The C-blocks'
+exact face topology (quad strip vs grid cells) is inferred, so the viewer
+draws points + grid lines rather than invented faces. Smooth meshes
+(G=0x060302xx) carry s16x3 position arrays in local frames. The main.dol
+was set up in Ghidra (GX library located at 0x80006xxx..0x8003Exxx) but its
+mesh-parsing code is reachable only through function-pointer tables and was
+not pinned statically — see asset-extract/docs/trb-format-notes.md §7 for
+the next steps (dolphin trace / vtable walk).
+
+Notes vs the Lua pipeline:
+  * parser.js also captures Orientation quaternions so boxes rotate in 3D.
+  * It ignores quoted `Type = "...";` properties (parser.lua has a latent
+    bug there that clobbers the entity's real type, e.g. APropShakable).
+  * Levels are loaded from ../levels/ relative to the page, so serve the
+    repo root (see run-viewer.sh) — don't open web/index.html via file://.
+
+Tests: web/test-headless.sh (dump-dom smoke test) and web/test-e2e.mjs
+(headless chromium + CDP: loads a level, clicks an entity, switches levels).
+
 * Future plans?
 spec.org might have them
 I can't draw the level geometry, even if I really want to.
