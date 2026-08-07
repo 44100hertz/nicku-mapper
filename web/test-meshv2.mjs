@@ -9,21 +9,20 @@ const collisionGroup = new THREE.Group();
 const meshFacesGroup = new THREE.Group();
 
 const app = readFileSync("web/app.js", "utf8");
-const start = app.indexOf("function loadMeshV2(data) {");
-if (start < 0) throw new Error("loadMeshV2 not found");
-// extract by brace counting
-let depth = 0, end = start;
-for (let i = start; i < app.length; i++) {
-  if (app[i] === "{") depth++;
-  else if (app[i] === "}") {
-    depth--;
-    if (depth === 0) { end = i + 1; break; }
+function extractFn(name, prefix) {
+  const start = app.indexOf(prefix);
+  if (start < 0) throw new Error(`${name} not found`);
+  let depth = 0, end = start;
+  for (let i = start; i < app.length; i++) {
+    if (app[i] === "{") depth++;
+    else if (app[i] === "}") {
+      depth--;
+      if (depth === 0) { end = i + 1; break; }
+    }
   }
+  return app.slice(start, end);
 }
-const src = app.slice(start, end);
-// Module-scope helpers the extracted fn references (mirror app.js):
-//   - tog.additive toggle (translucent additive vs solid)
-//   - meshStyle tint ramp, the _tint scratch color
+const src = extractFn("loadMeshV2", "function loadMeshV2(data) {");
 const _THREE = THREE;
 const tog = { additive: { checked: true } };
 const meshStyle = {

@@ -20,9 +20,9 @@ port of parser.lua; three.js is vendored in web/vendor/, so it works offline).
 Controls: left-drag to rotate, right-drag to pan, wheel to zoom (toward the
 cursor), click to inspect an entity, double-click to fly to it, and a
 "Jump to Danny" button that flies to the starting character.
-The panel lets you toggle points/links/paths/grid and filter individual
-entity types. All boxes render as
-edge outlines (no solid mode) so nothing hides the level; an invisible pick
+The panel lets you toggle points/links/paths/grid/mesh geometry/solid faces/
+back-face culling/additive blend and filter individual entity types. Entity
+boxes render as edge outlines so nothing hides the level; an invisible pick
 proxy keeps them clickable — but hidden types are not clickable. Name labels
 show only for ADanny and APropTriggerEndLevel, unconditionally.
 AMusicTrigger and AWorldSectionVolume start hidden (legend unchecked).
@@ -37,23 +37,18 @@ mesh is a GX-style INDEXED triangle strip: the mesh record's 0x98 index
 block walks (posIdx, nrmIdx, texIdx) per strip vertex and the repeated-index
 (degenerate) triangles are the engine's strip-restart markers, so the
 faces are the strip's real triangles (the old "vertex run is the strip"
-reading drew faces from the wrong indices — fixed this session). The
-solid faces now render as one uniform translucent shell instead of the
-rainbow-per-mesh look: all faces share a single style that's Gouraud
-shaded by the scene lights (smooth per-vertex normals via
-computeVertexNormals, so angle-based lighting makes floors/roofs/walls
-read by orientation) and tinted by height — a subtle cool->warm ramp
-(blue low, amber high) spread across the level's y-range. Shading and
-tint are always on; the only knob is "Translucent faces (additive
-blend)" (off by default — handy but reads too analytical): translucent
-uses ADDITIVE blending at 50% opacity with depthWrite off — addition is
-order-independent, so the classic semitransparent z-sorting artifacts
-(distant faces popping through nearer ones) become brighter glows on
-overlap instead; the default leaves the faces as a solid opaque,
-depth-writing surface. Controls: "Mesh
-geometry" shows/hides the group,
-"Mesh faces (solid)" the surfaces (default on). "Cull back faces (see
-through roofs/walls)" is on
+reading drew faces from the wrong indices — fixed this session). The solid faces render as one uniform shell instead of the rainbow-per-mesh
+look: all faces share a single style that's Gouraud shaded by the scene
+lights (smooth per-vertex normals via computeVertexNormals, so angle-based
+lighting makes floors/roofs/walls read by orientation) and tinted by height
+— a subtle cool->warm ramp (blue low, amber high) spread across the level's
+y-range. Shading and tint are always on; the only knob is "Translucent faces
+(additive blend)" (off by default): additive blending at 50% opacity with
+depthWrite off — addition is order-independent, so the classic
+semitransparent z-sorting artifacts (distant faces popping through nearer
+ones) become brighter glows on overlap instead. Controls: "Mesh geometry"
+shows/hides the group, "Mesh faces (solid)" the surfaces (default on).
+"Cull back faces (see through roofs/walls)" is on
 by default: the solid meshes render with THREE.FrontSide, so surfaces whose
 front faces point away from the camera (ceiling bottoms from above, outer
 wall faces, floor undersides) are culled and entities inside buildings show
@@ -78,6 +73,12 @@ section) get NO faces — the viewer draws their pool as lines only rather
 than guess (the old 3/4/5-byte search also mislabeled the recw-6/7 flags
 0x06020201/0x06020101 as a "shared-pool" variant; they decode fine once
 the search includes recw 6/7).
+
+The per-mesh collision blocks — (flag, x, y, z) s8 records that follow each
+vertex pool — are still exported to the JSON (each mesh's "coll" array) but
+are no longer drawn by the viewer: the footprints/walls/tint overlays were
+removed (2025-08). The decode is documented in
+asset-extract/docs/trb-format-notes.md §4c.
 
 Source: the gcn+wii/extract project's nicku-ntsc/P-GNOE/files/Data/<level>/
 (*.trb level parts — selection is name-agnostic: any file whose SYMB table
@@ -159,10 +160,28 @@ Notes vs the Lua pipeline:
   * Levels are loaded from ../levels/ relative to the page, so serve the
     repo root (see run-viewer.sh) — don't open web/index.html via file://.
 
-Tests: web/test-headless.sh (dump-dom smoke test) and web/test-e2e.mjs
-(headless chromium + CDP: loads a level, clicks an entity, switches levels).
+Tests: web/test-headless.sh (dump-dom smoke test), web/test-e2e.mjs
+(headless chromium + CDP: loads a level, clicks an entity, switches levels)
+and web/test-meshv2.mjs (Node-only: validates the mesh-v2 decode of every
+level JSON without a browser).
+
+* Reverse-engineering scripts
+
+The scratch tooling that cracked the TRB/DOL formats lives in scripts/ (it was
+previously scattered in /tmp):
+
+  scripts/trb/      # TRB container scanners (scan_pool.py, w2_scan.py)
+  scripts/dol/      # main.dol analysis (dol2elf, doldis, w4_scan, ghidra_dol)
+  scripts/dol/probes/ # one-shot w4b..w4v probes (investigation log)
+  scripts/util/     # misc helpers (diffcmp.sh image diffing)
+
+They default to the mounted disc-extract root; override with
+NICK_EXTRACT=/path/to/extract. See scripts/README.md.
 
 * Future plans?
-spec.org might have them
-I can't draw the level geometry, even if I really want to.
-If anyone can tell me what format the .ini's are, that would rock.
+spec.org is fully done now — the 3D web viewer covers the "fancy stuff".
+Still open on the geometry side: the texture pipeline (the .ttl files hold
+the textures and chunks hold UV arrays, but the UV count mapping and
+texture format are unsolved), meshes whose pool lives in the shared SECT
+section, and the C-block walkmesh face semantics. See
+asset-extract/docs/trb-format-notes.md for the details and next steps.

@@ -1015,5 +1015,15 @@ window.__nickmapper = {
     return list ? { type: list[hits[0].instanceId].type, name: list[hits[0].instanceId].name } : null;
   },
   cameraQuat: () => camera.quaternion.toArray(),
+  cameraTopDown: () => {
+    const b = state.bounds;
+    if (!b) return null;
+    const d = b.radius * 2.4;
+    camera.position.set(b.center.x, b.center.y + d, b.center.z + 0.01);
+    camera.up.set(0, 1, 0);
+    camera.lookAt(b.center.x, b.center.y, b.center.z);
+    controls.update();
+    return [b.center.x, b.center.y, d, b.radius];
+  },
   camDist: () => camera.position.distanceTo(controls.target),
 };

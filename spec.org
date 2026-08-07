@@ -1,4 +1,4 @@
-* DONE Mininmum
+* DONE Minimum
 ** DONE Read game INI file
 ** DONE Create SVG with some points in the right place
 
@@ -6,7 +6,10 @@
 ** DONE Draw endboxes, deathboxes
 ** DONE Powerup/other locations
 
-* TODO Fancy stuff
-** TODO Isometric 3d drawing
-** TODO Zooming/panning
-** TODO Live usage plus UI
+* DONE Fancy stuff (covered by the 3D web viewer in web/)
+** DONE Isometric 3d drawing
+** DONE Zooming/panning
+** DONE Live usage plus UI
+
+All items are implemented — the original SVG/Lua pipeline (parser.lua,
+printer.lua, main.lua) plus the interactive 3D viewer. See readme.org.

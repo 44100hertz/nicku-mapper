@@ -14,7 +14,7 @@ trap 'kill $SERVER_PID 2>/dev/null' EXIT
 sleep 0.5
 
 "$CHROME" \
-  --headless=new --no-sandbox --disable-gpu \
+  --headless=new --password-store=basic --no-sandbox --disable-gpu \
   --enable-unsafe-swiftshader --use-angle=swiftshader \
   --virtual-time-budget=20000 --dump-dom \
   "http://localhost:$PORT/web/" > /tmp/nickmapper-dom.html 2>/tmp/nickmapper-chrome.log
