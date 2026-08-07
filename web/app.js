@@ -30,6 +30,7 @@ const tog = {
   collision: $("tog-collision"),
   faces: $("tog-faces"),
   lines: $("tog-lines"),
+  cull: $("tog-cull"),
   grid: $("tog-grid"),
   yBottom: $("tog-ybottom"),
 };
@@ -190,9 +191,16 @@ function clearView() {
   collisionGroup.traverse(dispose);
   viewGroup.clear();
   collisionGroup.clear();
-  // clear() removed the sub-groups; re-parent so loadMeshV2 can fill them
+  // clear() removed the sub-groups; re-parent so loadMeshV2 can fill them.
+  // The sub-groups' OLD children (the previous level's meshes) survive
+  // collisionGroup.clear() — drop them here, or the previous level's mesh
+  // keeps rendering under the new level's entities (and shows through for
+  // levels whose collision JSON 404s). Their geometries were disposed by
+  // the traverse above.
   collisionGroup.add(meshFacesGroup);
   collisionGroup.add(meshLinesGroup);
+  meshFacesGroup.clear();
+  meshLinesGroup.clear();
   selGroup.visible = false;
   state.entities = [];
   state.byName.clear();
@@ -549,16 +557,32 @@ $("btn-hide-all").addEventListener("click", () => {
 // carries verts = raw (x, z, y) s16 fixed-point triples at 1/64 scale
 // (data.div). The raw y is +y DOWN (game-native; entities are +y up), so in
 // the viewer convention (x, -y, -z) the display position is
-// (x/div, y/div, -z/div) — the y flips cancel. Each mesh renders as ONE
-// triangle strip (GX_TRIANGLESTRIP): consecutive triples tile the geometry
-// and the zero-area triangles are the engine's strip-restart markers. The
-// solid faces are exact; the optional line overlay draws consecutive-run
-// edges split at large jumps so the long strip diagonals stay hidden.
+// (x/div, y/div, -z/div) — the y flips cancel.
+//
+// Each mesh that decodes also carries faces = the mesh's GX-style INDEXED
+// triangle strip: per-record (posIdx, nrmIdx, texIdx) triples from the
+// level's 0x98 block, with the pos index first (u8, or u16 for the big
+// meshes' 4/5-byte records). Consecutive posIdx walk the strip; the
+// repeated-index (degenerate) triangles are the engine's strip-restart
+// markers and render as nothing. The solid faces are the strip's real
+// triangles; the optional line overlay draws the strip's consecutive-run
+// edges (the zigzag path, deduped) so the long strip diagonals stay hidden.
+// Meshes without faces (undecoded variant formats) keep the old
+// bounding-sphere-run rendering.
 const MESH_COLORS = [
   [0.45, 0.62, 0.8], [0.85, 0.5, 0.25], [0.4, 0.8, 0.5], [0.9, 0.7, 0.3],
   [0.6, 0.45, 0.9], [0.3, 0.75, 0.85], [0.85, 0.45, 0.55], [0.7, 0.8, 0.4],
 ];
-const MESH_STRIP_GAP = 270; // raw units; line overlay split threshold
+const MESH_STRIP_GAP = 270; // raw units; legacy line overlay split threshold
+
+// Back-face culling for the solid meshes (see applyToggles): with
+// THREE.FrontSide, surfaces whose front faces point away from the camera
+// (ceiling bottoms from above, outer wall faces, floor undersides) are
+// culled, so entities inside buildings show through. The engine's winding
+// convention is "front = the side the player sees" (floors up, ceilings
+// down), so floors stay visible from above. Default ON (checkbox
+// tog-cull is checked); applyToggles syncs this from the checkbox.
+let cullBackfaces = true;
 
 const meshFacesGroup = new THREE.Group();
 const meshLinesGroup = new THREE.Group();
@@ -566,12 +590,22 @@ collisionGroup.add(meshFacesGroup);
 collisionGroup.add(meshLinesGroup);
 
 async function loadCollision(dir) {
+  // Only fetch levels that actually have collision data (manifest written by
+  // trb_mesh.py --web). Levels without it (JimmyNeutronLab, Level4 parts,
+  // TestWorld) otherwise 404 in the console on every load.
+  if (collisionManifest && !collisionManifest.includes(dir)) return null;
   const res = await fetch(`./collision/${dir}.json`);
   if (!res.ok) return null;
   const data = await res.json();
   if (data.format === "mesh-v2") return loadMeshV2(data);
   return null;
 }
+
+let collisionManifest = null;
+fetch("./collision/manifest.json")
+  .then((r) => (r.ok ? r.json() : null))
+  .then((m) => (collisionManifest = m))
+  .catch(() => {});
 
 function loadMeshV2(data) {
   const div = data.div || 64;
@@ -602,39 +636,58 @@ function loadMeshV2(data) {
         pos[j + 1] = v[i + 2] / div;
         pos[j + 2] = -v[i + 1] / div;
       }
-      // jump[i] = the gap between vertices i-1 and i exceeds the strip gap
-      const jump = new Uint8Array(n);
-      for (let i = 1; i < n; i++) {
-        const dx = v[(i - 1) * 3] - v[i * 3];
-        const dy = v[(i - 1) * 3 + 1] - v[i * 3 + 1];
-        const dz = v[(i - 1) * 3 + 2] - v[i * 3 + 2];
-        jump[i] = dx * dx + dy * dy + dz * dz > gap2 ? 1 : 0;
-      }
-      // exact consecutive-run line segments (split at large jumps so the
-      // wireframe stays clean — the long strip diagonals are hidden by faces)
-      for (let i = 1; i < n; i++) {
-        if (jump[i]) continue;
-        segVerts.push(
-          pos[(i - 1) * 3], pos[(i - 1) * 3 + 1], pos[(i - 1) * 3 + 2],
-          pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]
-        );
-        segColors.push(col[0], col[1], col[2], col[0], col[1], col[2]);
-      }
-      // faces: ONE un-split triangle strip per mesh (the engine's primitive
-      // — GX_TRIANGLESTRIP). Consecutive triples tile the floors/walls;
-      // the zero-area triangles are the strip-restart markers and render as
-      // nothing. Winding alternates per triangle (strip convention).
-      const fbase = facePos.length / 3;
-      for (let i = 0; i < n; i++) {
-        facePos.push(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
-        faceColor.push(col[0], col[1], col[2]);
-      }
-      for (let i = 0; i < n - 2; i++) {
-        const a = fbase + i;
-        const b = fbase + i + 1;
-        const c = fbase + i + 2;
-        if (i % 2) faceIdx.push(b, a, c);
-        else faceIdx.push(a, b, c);
+      const faces = m.faces;
+      if (faces && faces.length >= 3) {
+        // Indexed strip: faces[i] = the pool position of strip vertex i.
+        // Consecutive triples tile the floors/walls; repeated-index
+        // (degenerate) triangles are the strip-restart markers and render
+        // as nothing. Winding alternates per triangle (strip convention).
+        // Lines: the strip's consecutive-run edges (zigzag path, deduped)
+        // so the long strip diagonals stay hidden.
+        const fbase = facePos.length / 3;
+        for (let i = 0; i < n; i++) {
+          facePos.push(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
+          faceColor.push(col[0], col[1], col[2]);
+        }
+        const L = faces.length;
+        const seen = new Set();
+        for (let i = 0; i < L - 2; i++) {
+          const a = faces[i];
+          const b = faces[i + 1];
+          const c = faces[i + 2];
+          if (a === b || b === c || a === c) continue;
+          if (i % 2) faceIdx.push(fbase + b, fbase + a, fbase + c);
+          else faceIdx.push(fbase + a, fbase + b, fbase + c);
+          for (const [p, q] of [[a, b], [b, c]]) {
+            const key = p < q ? p * 65536 + q : q * 65536 + p;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            segVerts.push(
+              pos[p * 3], pos[p * 3 + 1], pos[p * 3 + 2],
+              pos[q * 3], pos[q * 3 + 1], pos[q * 3 + 2]
+            );
+            segColors.push(col[0], col[1], col[2], col[0], col[1], col[2]);
+          }
+        }
+      } else {
+        // No indexed strip for this mesh (undecoded / shared-pool variant):
+        // draw only the pool's consecutive-run lines. Guessing faces here is
+        // exactly what produced the wrong stretched triangles, so don't.
+        const jump = new Uint8Array(n);
+        for (let i = 1; i < n; i++) {
+          const dx = v[(i - 1) * 3] - v[i * 3];
+          const dy = v[(i - 1) * 3 + 1] - v[i * 3 + 1];
+          const dz = v[(i - 1) * 3 + 2] - v[i * 3 + 2];
+          jump[i] = dx * dx + dy * dy + dz * dz > gap2 ? 1 : 0;
+        }
+        for (let i = 1; i < n; i++) {
+          if (jump[i]) continue;
+          segVerts.push(
+            pos[(i - 1) * 3], pos[(i - 1) * 3 + 1], pos[(i - 1) * 3 + 2],
+            pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]
+          );
+          segColors.push(col[0], col[1], col[2], col[0], col[1], col[2]);
+        }
       }
       meshIdx++;
     }
@@ -661,7 +714,7 @@ function loadMeshV2(data) {
       geo,
       new THREE.MeshBasicMaterial({
         vertexColors: true,
-        side: THREE.DoubleSide,
+        side: cullBackfaces ? THREE.FrontSide : THREE.DoubleSide,
         depthWrite: true,
       })
     );
@@ -686,6 +739,19 @@ function applyToggles() {
   meshFacesGroup.visible = tog.faces.checked;
   meshLinesGroup.visible = tog.lines.checked;
 
+  // Back-face culling: with FrontSide, surfaces whose front faces point
+  // away from the camera (ceiling bottoms from above, outer wall faces,
+  // floor undersides) disappear, so entities inside buildings show
+  // through. The engine's winding convention is "front = the side the
+  // player sees" (floors up, ceilings down), so floors stay visible.
+  cullBackfaces = tog.cull.checked;
+  const cullSide = cullBackfaces ? THREE.FrontSide : THREE.DoubleSide;
+  for (const mesh of meshFacesGroup.children) {
+    if (mesh.isMesh && mesh.userData.type === "mesh-faces") {
+      mesh.material.side = cullSide;
+    }
+  }
+
   for (const [type, meshes] of state.typeMeshes) {
     const visible = !state.hiddenTypes.has(type);
     // Boxes are always edge outlines; the solid mesh stays around only as
@@ -707,7 +773,7 @@ function applyToggles() {
 }
 
 // View toggles
-for (const id of ["tog-points", "tog-links", "tog-paths", "tog-collision", "tog-faces", "tog-lines", "tog-grid"]) {
+for (const id of ["tog-points", "tog-links", "tog-paths", "tog-collision", "tog-faces", "tog-lines", "tog-cull", "tog-grid"]) {
   $(id).addEventListener("change", applyToggles);
 }
 

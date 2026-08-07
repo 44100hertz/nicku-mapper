@@ -24,12 +24,12 @@ for (let i = start; i < app.length; i++) {
 const src = app.slice(start, end);
 const loadMeshV2 = new Function(
   "THREE", "collisionGroup", "meshLinesGroup", "meshFacesGroup", "state",
-  "MESH_COLORS", "MESH_STRIP_GAP",
+  "MESH_COLORS", "MESH_STRIP_GAP", "cullBackfaces",
   `return (${src});`
 )(
   THREE, collisionGroup, meshLinesGroup, meshFacesGroup,
   { collisionLines: [] },
-  [[0.5, 0.5, 0.5]], 270
+  [[0.5, 0.5, 0.5]], 270, true
 );
 
 // mirror app.js module scope: sub-groups live inside collisionGroup

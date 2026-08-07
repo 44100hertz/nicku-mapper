@@ -30,6 +30,7 @@ await sleep(600);
 const profile = mkdtempSync(join(tmpdir(), "nm-cdp-"));
 const chrome = spawn(CHROME, [
   "--headless=new",
+  "--password-store=basic",
   "--no-sandbox",
   "--disable-gpu",
   "--enable-unsafe-swiftshader",

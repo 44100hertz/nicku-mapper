@@ -32,13 +32,22 @@ Deep-link to a level with a hash: /web/#SpongeBobLevel2
 
 ** Collision / mesh geometry
 Level geometry is extracted from the GameCube disc (TRB container, Toshi
-engine) into web/collision/<level>.json and rendered as SOLID meshes —
-each mesh is one triangle strip (GX_TRIANGLESTRIP): consecutive triples
-tile the geometry and the zero-area triangles are the engine's strip-
-restart markers. Colors cycle by mesh index. Controls: "Mesh geometry"
-shows/hides the group, "Mesh faces (solid)" the surfaces (default on),
-"Mesh lines (wireframe)" overlays the exact consecutive-run edges (split
-at large jumps so the long strip diagonals stay hidden).
+engine) into web/collision/<level>.json and rendered as SOLID meshes. Each
+mesh is a GX-style INDEXED triangle strip: the mesh record's 0x98 index
+block walks (posIdx, nrmIdx, texIdx) per strip vertex and the repeated-index
+(degenerate) triangles are the engine's strip-restart markers, so the
+faces are the strip's real triangles (the old "vertex run is the strip"
+reading drew faces from the wrong indices — fixed this session). Colors
+cycle by mesh index. Controls: "Mesh geometry" shows/hides the group,
+"Mesh faces (solid)" the surfaces (default on), "Mesh lines (wireframe)"
+overlays the strip's consecutive-run edges (deduped, so the long strip
+diagonals stay hidden). "Cull back faces (see through roofs/walls)" is on
+by default: the solid meshes render with THREE.FrontSide, so surfaces whose
+front faces point away from the camera (ceiling bottoms from above, outer
+wall faces, floor undersides) are culled and entities inside buildings show
+through. The engine's winding convention is "front = the side the player
+sees" (floors up, ceilings down), so floors stay visible from above;
+uncheck it for the full double-sided look.
 
 Re-extract with:
 
@@ -48,8 +57,15 @@ Re-extract with:
 symlink and the automatic repo-root walk can't find web/index.html). The
 --web export writes the mesh-v2 format: per-mesh raw (x, z, y) s16
 fixed-point vertex runs at 1/64 scale (data.div, yDown — the raw y is +y
-down, game-native; entities are +y up), record centers/radii and format
-flags; the OBJ files (output/mesh/) stay available for offline viewing.
+down, game-native; entities are +y up), record centers/radii, format flags
+and the indexed face strips ("faces": the strip's posIdx stream, when the
+mesh's index block decodes); the OBJ files (output/mesh/) stay available
+for offline viewing. Meshes whose index block is a junk record or whose
+indices exceed the own chunk (a true shared pool living in another
+section) get NO faces — the viewer draws their pool as lines only rather
+than guess (the old 3/4/5-byte search also mislabeled the recw-6/7 flags
+0x06020201/0x06020101 as a "shared-pool" variant; they decode fine once
+the search includes recw 6/7).
 
 Source: the gcn+wii/extract project's nicku-ntsc/P-GNOE/files/Data/<level>/
 (*.trb level parts — selection is name-agnostic: any file whose SYMB table
@@ -67,16 +83,58 @@ improves — entities stand on the geometry (part 01's original 82% check was
 sign-blind: its floors sit at y=0). The container, RELC pointer map and
 52-byte records are fully decoded (see asset-extract/docs/trb-format-notes.md).
 
-Topology status: SOLVED (this session) — each per-mesh vertex run is one
-GX triangle strip. Verified on 1,619 meshes / 118k triangles across two
-levels: zero edges shared by >2 triangles (no crossing/overlapping faces),
-and the floor tiles triangulate exactly (2.24-unit tiles -> 10419 raw^2
-triangles). The earlier "split at jumps > 270" heuristic was wrong (it
-broke the road, whose segments are 288-290 raw units apart); the strip is
-un-split. Still open: the C-block walkmesh face semantics, and the texture pipeline —
-the .ttl files hold the textures (TGA-named entries, raw pixel data) and the
-chunks hold UV arrays, but the UV count mapping and the texture format are
-unsolved (see asset-extract/docs/trb-format-notes.md §10). The main.dol was set up
+Topology status: SOLVED (this session) — the mesh is an INDEXED triangle
+strip, not a bare vertex run: the 52-byte record's u32[+0x20]/u32[+0x24]
+point at a [0x98][u16 count][count x triples] block where each record is
+(posIdx, nrmIdx, texIdx) with the pos index first. The layout rules are
+now analytic, not heuristic:
+  * pos is the FIRST field (misaligned reads that tile a pool are false
+    positives — the nrm stream can coincidentally look like a strip).
+  * pos index width is DERIVED from the pool: u8 iff pool <= 256, u16
+    iff pool > 256 (GX_INDEX8/16) — verified 100%% (zero violations)
+    across 9,264 mesh records / 69 parts / 8 flags.
+  * the record width IS stored in the format flag: 0x06020202 -> recw 3,
+    0x06020203 -> recw 4, 0x06030202 -> recw 4, 0x06030203 -> recw 5,
+    0x06020201 -> recw 6, 0x06020101 -> recw 7, 0x06030101 -> recw 8.
+So "how does the game know": the flag tells it the per-mesh attribute
+layout, and the pool size tells it the index width at load (the
+GXSetVtxDesc call). No width tables exist in the file or in loose files.
+The extractor tries recw 3..12 pos-first and keeps the strip that tiles
+the pool cleanly; a decode is accepted only if the pool sits in the
+record's bounding sphere and the strip is manifold (no edges shared by
+>2 triangles, no edge over 2.2x the record radius, >60% pool coverage).
+Consecutive posIdx walk the strip; the repeated-index (degenerate)
+triangles are the strip-restart markers; the pool is the vertex chunk's
+first max(posIdx)+1 triples. No fixed coordinate cap applies to pools
+(levels span the full s16 range; a hardcoded 12000 wrongly rejected
+JN's bigger meshes this session — fixed).
+
+Verified on SB part 01: 85/86 meshes decode to perfect manifolds (zero
+edges shared by >2 triangles, 100% pool coverage), the floor tiles
+triangulate exactly (2.24-unit tiles -> 10419 raw^2 per triangle pair),
+and the road-line mesh becomes 8 clean dash quads (16 triangles) instead
+of the old 22-triangle decode with 10 garbage spanning slivers. Level-wide
+(9 levels, 8,467 meshes): 6,652 meshes carry faces (78.6%%, up from
+61.7%% after the recw 6/7/8 + pos-first + scale fix), 430k+ triangles,
+and only ~72 (0.007%%) exceed 2.2x their mesh radius — the rest of the
+"stretched" look was the lines-only fallback plus legit long triangles in
+coarse meshes (e.g. SB3 k=16, a 9.85-unit wall panel within its 5.98-radius
+record). The smooth-mesh flags 0x06030202/03 have lower pool coverage
+(avg 0.79) but zero oversized edges — restart-heavy strips sharing a
+pool, not garbage. The earlier "split at jumps > 270" heuristic and the
+"vertex run is the strip" reading were wrong; the old decode drew faces
+from the wrong indices. The giant-triangle bug (1-2 per map) is fixed:
+the pool section comes from the +0x10 RELC relocation target, not from
+k+1 — level-global mesh tables (DPWorld_Level04_01_Detail, JN parts
+03/05) shift the mesh->chunk mapping, and reading k+1 grabbed the wrong
+chunk as the pool. With the fix: 8,916/9,127 meshes carry faces (97.7%%),
+no triangle exceeds ~2x its record radius. Still open: meshes whose
++0x10 relocates to section 0 (their pools live in the SECT — a true
+shared pool, still undecoded), the C-block walkmesh face semantics, and
+the texture pipeline —
+the .ttl files hold the textures (TGA-named entries, raw pixel data) and
+chunks hold UV arrays, but the UV count mapping and the texture format
+are unsolved (see asset-extract/docs/trb-format-notes.md §10). The main.dol was set up
 in Ghidra (GX library located at 0x80006xxx..0x8003Exxx) but its
 mesh-parsing code is reachable only through function-pointer tables and
 was not pinned statically — see asset-extract/docs/trb-format-notes.md §7
