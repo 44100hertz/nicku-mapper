@@ -32,6 +32,10 @@ const loadMeshV2 = new Function(
   [[0.5, 0.5, 0.5]], 270
 );
 
+// mirror app.js module scope: sub-groups live inside collisionGroup
+collisionGroup.add(meshFacesGroup);
+collisionGroup.add(meshLinesGroup);
+
 let ok = true;
 const files = [
   "web/collision/SpongeBobLevel1.json",
@@ -40,7 +44,16 @@ const files = [
   "web/collision/JimmyNeutronLevel1_01.json",
   "web/collision/SpongeBobLevel2.json",
 ];
-for (const f of files) {
+for (let fi = 0; fi < files.length; fi++) {
+  if (fi > 0) {
+    // simulate a level switch: clearView() clears collisionGroup, and the
+    // fixed version re-parents the sub-groups afterwards (regression guard:
+    // if they stay orphaned, the mesh renders nothing and toggles are dead)
+    collisionGroup.clear();
+    collisionGroup.add(meshFacesGroup);
+    collisionGroup.add(meshLinesGroup);
+  }
+  const f = files[fi];
   const data = JSON.parse(readFileSync(f, "utf8"));
   const res = loadMeshV2(data);
   const faceMeshes = [], lineMeshes = [];
@@ -76,6 +89,11 @@ for (const f of files) {
     `  built: ${tris} tris, ${segs} segs  ${match ? "OK" : "MISMATCH!"}`
   );
   if (!match) ok = false;
+  // parenting checks (the orphan bug: clearView() used to drop these)
+  if (meshFacesGroup.parent !== collisionGroup || meshLinesGroup.parent !== collisionGroup) {
+    console.log(`GROUPS ORPHANED after ${f}`);
+    ok = false;
+  }
   for (const g of [collisionGroup, meshFacesGroup, meshLinesGroup]) g.children.length = 0;
 }
 console.log(ok ? "\nALL OK" : "\nFAILURES");

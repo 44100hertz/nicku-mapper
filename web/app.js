@@ -190,6 +190,9 @@ function clearView() {
   collisionGroup.traverse(dispose);
   viewGroup.clear();
   collisionGroup.clear();
+  // clear() removed the sub-groups; re-parent so loadMeshV2 can fill them
+  collisionGroup.add(meshFacesGroup);
+  collisionGroup.add(meshLinesGroup);
   selGroup.visible = false;
   state.entities = [];
   state.byName.clear();
