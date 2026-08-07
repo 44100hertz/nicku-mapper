@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 
 const collisionGroup = new THREE.Group();
 const meshFacesGroup = new THREE.Group();
+const collFootGroup = new THREE.Group();
 
 const app = readFileSync("web/app.js", "utf8");
 function extractFn(name, prefix) {
@@ -32,18 +33,52 @@ const meshStyle = {
 };
 const _tint = new THREE.Color();
 const MESH_ADDITIVE_OPACITY = 0.5;
+// collision-footprint helpers (mirror app.js module scope)
+const _flagColor = new THREE.Color();
+const COLL_FLAG_BITS = [
+  { bit: 0x01, name: "char", color: 0x3ddc84 },
+  { bit: 0x02, name: "water", color: 0x3a86ff },
+  { bit: 0x04, name: "goo", color: 0x8ac926 },
+  { bit: 0x08, name: "phase", color: 0xf15bb5 },
+  { bit: 0x10, name: "damage", color: 0xff4d4d },
+  { bit: 0x20, name: "kback", color: 0xff9f1c },
+  { bit: 0x40, name: "kbackdam", color: 0xe85d04 },
+  { bit: 0x80, name: "nopathfind", color: 0x6c757d },
+];
+const COLL_FLAG_NONE = 0x00;
+const COLL_FLAG_ALL = 0xff;
+function collFlagColor(flag) {
+  if (flag === COLL_FLAG_NONE) return _flagColor.set(0x8b93a5);
+  if (flag === COLL_FLAG_ALL) return _flagColor.set(0xffffff);
+  let r = 0, g = 0, b = 0, n = 0;
+  for (const { bit, color } of COLL_FLAG_BITS) {
+    if (flag & bit) {
+      _flagColor.set(color);
+      r += _flagColor.r;
+      g += _flagColor.g;
+      b += _flagColor.b;
+      n++;
+    }
+  }
+  if (!n) return _flagColor.set(0x8b93a5);
+  _flagColor.setRGB(r / n, g / n, b / n);
+  return _flagColor;
+}
 const loadMeshV2 = new Function(
-  "THREE", "collisionGroup", "meshFacesGroup", "state",
+  "THREE", "collisionGroup", "meshFacesGroup", "collFootGroup", "state",
   "cullBackfaces", "tog", "meshStyle", "_tint", "MESH_ADDITIVE_OPACITY",
+  "collFlagColor", "_flagColor",
   `return (${src});`
 )(
-  THREE, collisionGroup, meshFacesGroup,
+  THREE, collisionGroup, meshFacesGroup, collFootGroup,
   {},
-  true, tog, meshStyle, _tint, MESH_ADDITIVE_OPACITY
+  true, tog, meshStyle, _tint, MESH_ADDITIVE_OPACITY,
+  collFlagColor, _flagColor
 );
 
-// mirror app.js module scope: the sub-group lives inside collisionGroup
+// mirror app.js module scope: the sub-groups live inside collisionGroup
 collisionGroup.add(meshFacesGroup);
+collisionGroup.add(collFootGroup);
 
 let ok = true;
 const files = [
@@ -65,10 +100,30 @@ for (let fi = 0; fi < files.length; fi++) {
   const data = JSON.parse(readFileSync(f, "utf8"));
   const res = loadMeshV2(data);
   const faceMeshes = [];
-  for (const g of [collisionGroup, meshFacesGroup]) {
+  let footLines = 0;
+  let footPoints = 0;
+  for (const g of [collisionGroup, meshFacesGroup, collFootGroup]) {
     for (const c of g.children) {
       if (c.isMesh) faceMeshes.push(c);
+      else if (c.isLineSegments) footLines++;
+      else if (c.isPoints) footPoints++;
     }
+  }
+  // collision footprint geometry: finite positions, colors match counts
+  for (const g of [collFootGroup]) {
+    for (const c of g.children) {
+      const pos = c.geometry.attributes.position;
+      const col = c.geometry.attributes.color;
+      for (let i = 0; i < pos.count * 3; i++) {
+        if (!Number.isFinite(pos.array[i])) { console.log(`NaN foot pos in ${f}`); ok = false; }
+      }
+      if (col && col.count !== pos.count) { console.log(`foot color count in ${f}`); ok = false; }
+      if (c.isLineSegments && pos.count % 2 !== 0) { console.log(`odd foot seg count in ${f}`); ok = false; }
+    }
+  }
+  if (res.footRecords > 0 && (footLines === 0 && footPoints === 0)) {
+    console.log(`no footprint geometry but ${res.footRecords} records in ${f}`);
+    ok = false;
   }
   let tris = 0;
   for (const m of faceMeshes) {
@@ -95,16 +150,16 @@ for (let fi = 0; fi < files.length; fi++) {
   const name = f.split("/").pop().padEnd(38);
   const match = tris === res.faces;
   console.log(
-    `${name} res={verts:${res.verts}, faces:${res.faces}}` +
+    `${name} res={verts:${res.verts}, faces:${res.faces}, foot:${res.footRecords}}` +
     `  built: ${tris} tris  ${match ? "OK" : "MISMATCH!"}`
   );
   if (!match) ok = false;
   // parenting checks (the orphan bug: clearView() used to drop these)
-  if (meshFacesGroup.parent !== collisionGroup) {
+  if (meshFacesGroup.parent !== collisionGroup || collFootGroup.parent !== collisionGroup) {
     console.log(`GROUPS ORPHANED after ${f}`);
     ok = false;
   }
-  for (const g of [collisionGroup, meshFacesGroup]) g.children.length = 0;
+  for (const g of [collisionGroup, meshFacesGroup, collFootGroup]) g.children.length = 0;
 }
 console.log(ok ? "\nALL OK" : "\nFAILURES");
 process.exit(ok ? 0 : 1);

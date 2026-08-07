@@ -29,6 +29,7 @@ const tog = {
   paths: $("tog-paths"),
   collision: $("tog-collision"),
   faces: $("tog-faces"),
+  collfoot: $("tog-collfoot"),
   cull: $("tog-cull"),
   grid: $("tog-grid"),
   additive: $("tog-additive"),
@@ -214,7 +215,9 @@ function clearView() {
   // levels whose collision JSON 404s). Their geometries were disposed by
   // the traverse above.
   collisionGroup.add(meshFacesGroup);
+  collisionGroup.add(collFootGroup);
   meshFacesGroup.clear();
+  collFootGroup.clear();
   selGroup.visible = false;
   state.entities = [];
   state.byName.clear();
@@ -488,7 +491,7 @@ async function loadLevel(dir) {
     const coll = (await loadCollision(dir)) || null;
     const meshTxt =
       coll && coll.verts
-        ? ` · ${coll.verts} mesh verts · ${coll.faces} faces`
+        ? ` · ${coll.verts} mesh verts · ${coll.faces} faces${coll.footRecords ? ` · ${coll.footRecords} coll pts` : ""}`
         : "";
     frameCamera();
     buildLegend();
@@ -591,6 +594,60 @@ let cullBackfaces = true;
 
 const meshFacesGroup = new THREE.Group();
 collisionGroup.add(meshFacesGroup);
+
+// ---------------------------------------------------------------------------
+// Collision footprints — the per-mesh (flag, x, y, z) s8 blocks ("coll")
+// ---------------------------------------------------------------------------
+// Each mesh's "coll" array is the game's collision data: 4-byte records
+// (flag, x, y, z), all s8, exported by trb_mesh.py --web from the block that
+// follows the mesh's vertex pool (record +0x14 -> +0x18). The (x, z) bytes
+// are quantized against the mesh's OWN vertex bbox per axis — world =
+// bmin + (s8 + 128) * (bmax - bmin) / 255 — and the 3rd byte is a small
+// height offset in world units below the mesh's top surface (0..-3, drawn
+// at meshTopY + y + EPS). Consecutive records trace the collision footprint
+// outline in the (x, z) plane (floors/walls as closed AABB loops).
+//
+// The flag byte is a bitmask over the engine's collision property names
+// (main.dol string table): char / water / goo / phase / damage / kback /
+// kbackdam / nopathfind for bits 0..7 (pathonly/cameraonly/noocclude don't
+// fit a byte). 0x00 = default solid; 0xFF = all bits set (a special value,
+// 6.8% of records). Verified 2025-08: flags 0 (71%), 1 (12%), 255 (7%),
+// 2 (3%), 3, 254, 4... and identical geometry copies carry identical flags.
+const collFootGroup = new THREE.Group();
+collisionGroup.add(collFootGroup);
+
+// Per-bit colors for the 8 encodable collision properties.
+const COLL_FLAG_BITS = [
+  { bit: 0x01, name: "char", color: 0x3ddc84 }, // solid / character-walkable
+  { bit: 0x02, name: "water", color: 0x3a86ff },
+  { bit: 0x04, name: "goo", color: 0x8ac926 },
+  { bit: 0x08, name: "phase", color: 0xf15bb5 },
+  { bit: 0x10, name: "damage", color: 0xff4d4d },
+  { bit: 0x20, name: "kback", color: 0xff9f1c },
+  { bit: 0x40, name: "kbackdam", color: 0xe85d04 },
+  { bit: 0x80, name: "nopathfind", color: 0x6c757d },
+];
+const COLL_FLAG_NONE = 0x00; // default solid — dim gray
+const COLL_FLAG_ALL = 0xff; // all bits — white
+
+const _flagColor = new THREE.Color();
+function collFlagColor(flag) {
+  if (flag === COLL_FLAG_NONE) return _flagColor.set(0x8b93a5);
+  if (flag === COLL_FLAG_ALL) return _flagColor.set(0xffffff);
+  let r = 0, g = 0, b = 0, n = 0;
+  for (const { bit, color } of COLL_FLAG_BITS) {
+    if (flag & bit) {
+      _flagColor.set(color);
+      r += _flagColor.r;
+      g += _flagColor.g;
+      b += _flagColor.b;
+      n++;
+    }
+  }
+  if (!n) return _flagColor.set(0x8b93a5);
+  _flagColor.setRGB(r / n, g / n, b / n);
+  return _flagColor;
+}
 
 async function loadCollision(dir) {
   // Only fetch levels that actually have collision data (manifest written by
@@ -712,7 +769,95 @@ function loadMeshV2(data) {
     meshFacesGroup.add(mesh);
     faceCount = faceIdx.length / 3;
   }
-  return { verts: vertTotal, faces: faceCount };
+
+  // ---- collision footprints (per-mesh "coll" (flag,x,y,z) s8 blocks) ----
+  const segPos = [];
+  const segCol = [];
+  const ptPos = [];
+  const ptCol = [];
+  let footRecords = 0;
+  const footEps = 0.35; // lift the overlay above the top surface
+  for (const part of data.parts || []) {
+    for (const m of part.meshes || []) {
+      const v = m.verts || [];
+      const c = m.coll;
+      const nv = v.length / 3;
+      if (!c || c.length < 8 || nv < 2) continue;
+      // x/z quantize against the mesh's own vertex bbox (per axis); the
+      // footprint plane sits just below the mesh's top surface.
+      let xmin = Infinity, xmax = -Infinity, zmin = Infinity, zmax = -Infinity;
+      let ymax = -Infinity;
+      for (let i = 0; i < nv; i++) {
+        const wx = v[i * 3] / div;
+        const wz = -v[i * 3 + 1] / div;
+        const wy = v[i * 3 + 2] / div;
+        if (wx < xmin) xmin = wx;
+        if (wx > xmax) xmax = wx;
+        if (wz < zmin) zmin = wz;
+        if (wz > zmax) zmax = wz;
+        if (wy > ymax) ymax = wy;
+      }
+      if (!(xmax > xmin && zmax > zmin)) continue;
+      const nr = Math.floor(c.length / 4);
+      const pts = [];
+      for (let i = 0; i < nr; i++) {
+        const flag = c[i * 4];
+        const x = c[i * 4 + 1], y = c[i * 4 + 2], z = c[i * 4 + 3];
+        const wx = xmin + ((x + 128) * (xmax - xmin)) / 255;
+        const wz = zmin + ((z + 128) * (zmax - zmin)) / 255;
+        const wy = ymax + y + footEps;
+        pts.push([wx, wy, wz, flag]);
+        ptPos.push(wx, wy, wz);
+        collFlagColor(flag);
+        ptCol.push(_flagColor.r, _flagColor.g, _flagColor.b);
+        footRecords++;
+      }
+      // Outline segments: consecutive records trace the footprint loop.
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1], b = pts[i];
+        segPos.push(a[0], a[1], a[2], b[0], b[1], b[2]);
+        collFlagColor(a[3]);
+        segCol.push(_flagColor.r, _flagColor.g, _flagColor.b);
+        collFlagColor(b[3]);
+        segCol.push(_flagColor.r, _flagColor.g, _flagColor.b);
+      }
+    }
+  }
+  if (segPos.length) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(segPos, 3));
+    geo.setAttribute("color", new THREE.Float32BufferAttribute(segCol, 3));
+    const lines = new THREE.LineSegments(
+      geo,
+      new THREE.LineBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false,
+      })
+    );
+    lines.userData = { type: "coll-footprints" };
+    collFootGroup.add(lines);
+  }
+  if (ptPos.length) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(ptPos, 3));
+    geo.setAttribute("color", new THREE.Float32BufferAttribute(ptCol, 3));
+    const pts = new THREE.Points(
+      geo,
+      new THREE.PointsMaterial({
+        vertexColors: true,
+        size: 0.5,
+        sizeAttenuation: true,
+        transparent: true,
+        opacity: 0.9,
+        depthWrite: false,
+      })
+    );
+    pts.userData = { type: "coll-footprints" };
+    collFootGroup.add(pts);
+  }
+  return { verts: vertTotal, faces: faceCount, footRecords };
 }
 // ---------------------------------------------------------------------------
 // View toggles
@@ -726,6 +871,9 @@ function applyToggles() {
 
   collisionGroup.visible = showCollision;
   meshFacesGroup.visible = tog.faces.checked;
+  collFootGroup.visible = tog.collfoot && tog.collfoot.checked;
+  const collLegendEl = document.getElementById("coll-legend");
+  if (collLegendEl) collLegendEl.style.display = tog.collfoot && tog.collfoot.checked ? "" : "none";
 
   // Back-face culling: with FrontSide, surfaces whose front faces point
   // away from the camera (ceiling bottoms from above, outer wall faces,
@@ -771,8 +919,39 @@ function applyToggles() {
   }
 }
 
+// Static legend for the collision flag colors (built once).
+function buildCollLegend() {
+  const list = document.getElementById("coll-legend-list");
+  if (!list || list.childElementCount) return;
+  const rows = [
+    { v: COLL_FLAG_NONE, name: "0x00 default (solid)" },
+    ...COLL_FLAG_BITS.map((b) => ({
+      v: b.bit,
+      name: `0x${b.bit.toString(16).padStart(2, "0")} ${b.name}`,
+      color: b.color,
+    })),
+    { v: COLL_FLAG_ALL, name: "0xff all bits" },
+  ];
+  for (const r of rows) {
+    const row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.alignItems = "center";
+    row.style.gap = "6px";
+    const dot = document.createElement("span");
+    dot.className = "legend-dot";
+    const col = r.color !== undefined ? r.color : r.v === COLL_FLAG_NONE ? 0x8b93a5 : 0xffffff;
+    dot.style.background = `#${col.toString(16).padStart(6, "0")}`;
+    row.appendChild(dot);
+    const name = document.createElement("span");
+    name.textContent = r.name;
+    row.appendChild(name);
+    list.appendChild(row);
+  }
+}
+buildCollLegend();
+
 // View toggles
-for (const id of ["tog-points", "tog-links", "tog-paths", "tog-collision", "tog-faces", "tog-cull", "tog-grid", "tog-additive"]) {
+for (const id of ["tog-points", "tog-links", "tog-paths", "tog-collision", "tog-faces", "tog-collfoot", "tog-cull", "tog-grid", "tog-additive"]) {
   $(id).addEventListener("change", applyToggles);
 }
 
@@ -1003,6 +1182,12 @@ window.__nickmapper = {
   spawnType: () => (state.spawn && state.spawn.type) || null,
   collisionVisible: () => collisionGroup.visible,
   collisionParented: () => collisionGroup.parent === scene,
+  collFootVisible: () => collFootGroup.visible,
+  collFootStats: () =>
+    collFootGroup.children.map((c) => ({
+      kind: c.isLineSegments ? "lines" : c.isPoints ? "points" : "other",
+      count: c.geometry.attributes.position.count,
+    })),
   meshFacesVisible: () => meshFacesGroup.visible,
   pickAt: (x, y) => {
     const rect = renderer.domElement.getBoundingClientRect();

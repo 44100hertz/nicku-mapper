@@ -74,11 +74,17 @@ than guess (the old 3/4/5-byte search also mislabeled the recw-6/7 flags
 0x06020201/0x06020101 as a "shared-pool" variant; they decode fine once
 the search includes recw 6/7).
 
-The per-mesh collision blocks — (flag, x, y, z) s8 records that follow each
-vertex pool — are still exported to the JSON (each mesh's "coll" array) but
-are no longer drawn by the viewer: the footprints/walls/tint overlays were
-removed (2025-08). The decode is documented in
-asset-extract/docs/trb-format-notes.md §4c.
+The per-mesh collision blocks — (flag, x, z, y) s8 records that follow each
+vertex pool — are exported to the JSON (each mesh's "coll" array) and the
+viewer draws them as flag-colored footprint overlays (toggle "Collision
+footprints (flags)", off by default): the (x, z) bytes quantize against
+the mesh's own vertex bbox per axis (world = bmin + (s8+128)*(bmax-bmin)/
+255; verified across 407k records, median coll→geometry distance ~1.2 u)
+and the flag byte maps to the engine's collision properties (char/water/
+goo/phase/damage/kback/kbackdam/nopathfind for bits 0-7, from the DOL
+string table; 0x00 = default solid 71%, 0x01 char 12%, 0xFF all-bits 7%).
+The exact flag semantics and the ±0.08 u transform inset still need a
+Dolphin trace (see asset-extract/docs/trb-format-notes.md §4c).
 
 Source: the gcn+wii/extract project's nicku-ntsc/P-GNOE/files/Data/<level>/
 (*.trb level parts — selection is name-agnostic: any file whose SYMB table
@@ -183,5 +189,8 @@ spec.org is fully done now — the 3D web viewer covers the "fancy stuff".
 Still open on the geometry side: the texture pipeline (the .ttl files hold
 the textures and chunks hold UV arrays, but the UV count mapping and
 texture format are unsolved), meshes whose pool lives in the shared SECT
-section, and the C-block walkmesh face semantics. See
-asset-extract/docs/trb-format-notes.md for the details and next steps.
+section, and the exact collision flag semantics / s8 transform (needs a
+Dolphin trace; the flag-colored footprint overlay is in the viewer already
+— see §4c-4e in asset-extract/docs/trb-format-notes.md for the sibling-
+engine comparison, the OpCODE finding, and the SECT+0x38AC polygon list
+that is the best "dedicated collision" candidate).
