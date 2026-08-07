@@ -262,7 +262,6 @@ console.log("type toggle OK, page title:", await evaluate("document.title"));
 const coll = await evaluate(`({
   visible: window.__nickmapper.collisionVisible(),
   parented: window.__nickmapper.collisionParented(),
-  lines: window.__nickmapper.collisionLineCount(),
   status: document.getElementById("status").textContent,
 })`);
 console.log("collision:", JSON.stringify(coll));
@@ -302,28 +301,6 @@ if ((await evaluate(`window.__nickmapper.meshFacesVisible()`)) !== false)
 await evaluate(`(() => {
   const cb = document.getElementById("tog-faces");
   cb.checked = true;
-  cb.dispatchEvent(new Event("change"));
-})()`);
-await sleep(200);
-
-// Mesh lines: optional wireframe overlay, off by default
-const linesCb = await evaluate(`({
-  cb: document.getElementById("tog-lines").checked,
-  visible: window.__nickmapper.meshLinesVisible(),
-})`);
-console.log("lines:", JSON.stringify(linesCb));
-if (linesCb.cb !== false) throw new Error("lines toggle should default unchecked");
-await evaluate(`(() => {
-  const cb = document.getElementById("tog-lines");
-  cb.checked = true;
-  cb.dispatchEvent(new Event("change"));
-})()`);
-await sleep(200);
-if ((await evaluate(`window.__nickmapper.meshLinesVisible()`)) !== true)
-  throw new Error("lines toggle failed");
-await evaluate(`(() => {
-  const cb = document.getElementById("tog-lines");
-  cb.checked = false;
   cb.dispatchEvent(new Event("change"));
 })()`);
 await sleep(200);

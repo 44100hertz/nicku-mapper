@@ -29,11 +29,29 @@ const tog = {
   paths: $("tog-paths"),
   collision: $("tog-collision"),
   faces: $("tog-faces"),
-  lines: $("tog-lines"),
   cull: $("tog-cull"),
   grid: $("tog-grid"),
-  yBottom: $("tog-ybottom"),
+  additive: $("tog-additive"),
 };
+
+// ---------------------------------------------------------------------------
+// Mesh face style (uniform, Gouraud-shaded, Y-tinted)
+// ---------------------------------------------------------------------------
+// All faces share one base style: the color is tinted a bit by world height
+// (cool below, warm above), then Gouraud-lit by the scene lights so each
+// face reads with angle-based shading. The only knob is translucent vs
+// solid: translucent uses ADDITIVE blending at 50% opacity, which sidesteps
+// the classic transparent-sorting artifacts (overlaps get brighter instead
+// of z-fighting); solid is a normal opaque surface.
+const meshStyle = {
+  // Height tint ramp (subtle shift around the base hue, near-constant light)
+  tintLow: new THREE.Color(0x2e5f8a), // cool blue, low areas
+  tintHigh: new THREE.Color(0x8a6f2e), // warm amber, high areas
+  baseLight: new THREE.Color(0xe8ecf4), // material color (vertex colors modulate)
+};
+
+// Additive blend factor (opacity of the translucent shell).
+const MESH_ADDITIVE_OPACITY = 0.5;
 
 // ---------------------------------------------------------------------------
 // Three.js scene
@@ -89,7 +107,6 @@ const state = {
   links: [],
   pathLine: null,
   labelObjects: [],
-  collisionLines: [],
   bounds: null,
   hiddenTypes: new Set(),
   selection: null,
@@ -162,9 +179,8 @@ const DEFAULT_HIDDEN_TYPES = new Set(["AMusicTrigger", "AWorldSectionVolume"]);
 const unitEdgeVerts = new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1))
   .attributes.position.array;
 
-// World-space Y for a box center (Position.y is the center; if the
-// "y is box bottom" toggle is on, shift up by half the height).
-const boxY = (e) => WY(e.y) + (tog.yBottom.checked ? e.h / 2 : 0);
+// World-space Y for a box center (Position.y is the center of the box).
+const boxY = (e) => WY(e.y);
 
 const boxMatrix = (e) =>
   new THREE.Matrix4().compose(
@@ -191,16 +207,14 @@ function clearView() {
   collisionGroup.traverse(dispose);
   viewGroup.clear();
   collisionGroup.clear();
-  // clear() removed the sub-groups; re-parent so loadMeshV2 can fill them.
-  // The sub-groups' OLD children (the previous level's meshes) survive
+  // clear() removed the sub-group; re-parent so loadMeshV2 can fill it.
+  // The sub-group's OLD children (the previous level's meshes) survive
   // collisionGroup.clear() — drop them here, or the previous level's mesh
   // keeps rendering under the new level's entities (and shows through for
   // levels whose collision JSON 404s). Their geometries were disposed by
   // the traverse above.
   collisionGroup.add(meshFacesGroup);
-  collisionGroup.add(meshLinesGroup);
   meshFacesGroup.clear();
-  meshLinesGroup.clear();
   selGroup.visible = false;
   state.entities = [];
   state.byName.clear();
@@ -209,7 +223,6 @@ function clearView() {
   state.links = [];
   state.pathLine = null;
   state.labelObjects = [];
-  state.collisionLines = [];
   state.hiddenTypes.clear();
   state.selection = null;
   state.spawn = null;
@@ -475,7 +488,7 @@ async function loadLevel(dir) {
     const coll = (await loadCollision(dir)) || null;
     const meshTxt =
       coll && coll.verts
-        ? ` · ${coll.verts} mesh verts · ${coll.faces} faces${coll.segments ? ` · ${coll.segments} segments` : ""}`
+        ? ` · ${coll.verts} mesh verts · ${coll.faces} faces`
         : "";
     frameCamera();
     buildLegend();
@@ -565,16 +578,8 @@ $("btn-hide-all").addEventListener("click", () => {
 // meshes' 4/5-byte records). Consecutive posIdx walk the strip; the
 // repeated-index (degenerate) triangles are the engine's strip-restart
 // markers and render as nothing. The solid faces are the strip's real
-// triangles; the optional line overlay draws the strip's consecutive-run
-// edges (the zigzag path, deduped) so the long strip diagonals stay hidden.
-// Meshes without faces (undecoded variant formats) keep the old
-// bounding-sphere-run rendering.
-const MESH_COLORS = [
-  [0.45, 0.62, 0.8], [0.85, 0.5, 0.25], [0.4, 0.8, 0.5], [0.9, 0.7, 0.3],
-  [0.6, 0.45, 0.9], [0.3, 0.75, 0.85], [0.85, 0.45, 0.55], [0.7, 0.8, 0.4],
-];
-const MESH_STRIP_GAP = 270; // raw units; legacy line overlay split threshold
-
+// triangles. Meshes without faces (undecoded variant formats) render
+// nothing.
 // Back-face culling for the solid meshes (see applyToggles): with
 // THREE.FrontSide, surfaces whose front faces point away from the camera
 // (ceiling bottoms from above, outer wall faces, floor undersides) are
@@ -585,9 +590,7 @@ const MESH_STRIP_GAP = 270; // raw units; legacy line overlay split threshold
 let cullBackfaces = true;
 
 const meshFacesGroup = new THREE.Group();
-const meshLinesGroup = new THREE.Group();
 collisionGroup.add(meshFacesGroup);
-collisionGroup.add(meshLinesGroup);
 
 async function loadCollision(dir) {
   // Only fetch levels that actually have collision data (manifest written by
@@ -607,34 +610,35 @@ fetch("./collision/manifest.json")
   .then((m) => (collisionManifest = m))
   .catch(() => {});
 
+// Tmp color scratch (allocated once, reused when building per-vertex tint).
+const _tint = new THREE.Color();
+
 function loadMeshV2(data) {
   const div = data.div || 64;
-  const segVerts = [];
-  const segColors = [];
   const facePos = [];
-  const faceColor = [];
   const faceIdx = [];
+  // Per-vertex world-up positions drive both normals and the Y tint.
+  const faceRawY = [];
+  let minY = Infinity;
+  let maxY = -Infinity;
   let vertTotal = 0;
-  let meshIdx = 0;
-  const gap2 = MESH_STRIP_GAP * MESH_STRIP_GAP;
   for (const part of data.parts || []) {
     for (const m of part.meshes || []) {
       const v = m.verts || [];
       const n = v.length / 3;
-      if (n < 2) {
-        meshIdx++;
-        continue;
-      }
-      const col = MESH_COLORS[meshIdx % MESH_COLORS.length];
+      if (n < 2) continue;
       vertTotal += n;
       // world positions in the viewer convention (x, -y, -z): the raw
       // triple (x, z, y) is +y DOWN (game-native), so world-up y = -y/div
       // and the viewer's y-flip cancels it: display = (x/div, y/div, -z/div).
       const pos = new Float32Array(n * 3);
       for (let i = 0, j = 0; i < v.length; i += 3, j += 3) {
+        const wy = v[i + 2] / div; // world-up y (== display y here)
         pos[j] = v[i] / div;
-        pos[j + 1] = v[i + 2] / div;
+        pos[j + 1] = wy;
         pos[j + 2] = -v[i + 1] / div;
+        if (wy < minY) minY = wy;
+        if (wy > maxY) maxY = wy;
       }
       const faces = m.faces;
       if (faces && faces.length >= 3) {
@@ -642,15 +646,14 @@ function loadMeshV2(data) {
         // Consecutive triples tile the floors/walls; repeated-index
         // (degenerate) triangles are the strip-restart markers and render
         // as nothing. Winding alternates per triangle (strip convention).
-        // Lines: the strip's consecutive-run edges (zigzag path, deduped)
-        // so the long strip diagonals stay hidden.
         const fbase = facePos.length / 3;
         for (let i = 0; i < n; i++) {
           facePos.push(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
-          faceColor.push(col[0], col[1], col[2]);
+          // Store world-up y per vertex for the height tint applied after
+          // a full pass (so the ramp spans the whole level, not one mesh).
+          faceRawY.push(pos[i * 3 + 1]);
         }
         const L = faces.length;
-        const seen = new Set();
         for (let i = 0; i < L - 2; i++) {
           const a = faces[i];
           const b = faces[i + 1];
@@ -658,72 +661,58 @@ function loadMeshV2(data) {
           if (a === b || b === c || a === c) continue;
           if (i % 2) faceIdx.push(fbase + b, fbase + a, fbase + c);
           else faceIdx.push(fbase + a, fbase + b, fbase + c);
-          for (const [p, q] of [[a, b], [b, c]]) {
-            const key = p < q ? p * 65536 + q : q * 65536 + p;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            segVerts.push(
-              pos[p * 3], pos[p * 3 + 1], pos[p * 3 + 2],
-              pos[q * 3], pos[q * 3 + 1], pos[q * 3 + 2]
-            );
-            segColors.push(col[0], col[1], col[2], col[0], col[1], col[2]);
-          }
-        }
-      } else {
-        // No indexed strip for this mesh (undecoded / shared-pool variant):
-        // draw only the pool's consecutive-run lines. Guessing faces here is
-        // exactly what produced the wrong stretched triangles, so don't.
-        const jump = new Uint8Array(n);
-        for (let i = 1; i < n; i++) {
-          const dx = v[(i - 1) * 3] - v[i * 3];
-          const dy = v[(i - 1) * 3 + 1] - v[i * 3 + 1];
-          const dz = v[(i - 1) * 3 + 2] - v[i * 3 + 2];
-          jump[i] = dx * dx + dy * dy + dz * dz > gap2 ? 1 : 0;
-        }
-        for (let i = 1; i < n; i++) {
-          if (jump[i]) continue;
-          segVerts.push(
-            pos[(i - 1) * 3], pos[(i - 1) * 3 + 1], pos[(i - 1) * 3 + 2],
-            pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]
-          );
-          segColors.push(col[0], col[1], col[2], col[0], col[1], col[2]);
         }
       }
-      meshIdx++;
+      // Meshes without an indexed strip (undecoded variant formats) render
+      // nothing — guessing faces here is exactly what produced the wrong
+      // stretched triangles, and the old line fallback is gone.
     }
   }
-  if (segVerts.length) {
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.Float32BufferAttribute(segVerts, 3));
-    geo.setAttribute("color", new THREE.Float32BufferAttribute(segColors, 3));
-    const lines = new THREE.LineSegments(
-      geo,
-      new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85 })
-    );
-    lines.userData = { type: "mesh-lines" };
-    meshLinesGroup.add(lines);
-    state.collisionLines.push(lines);
-  }
   let faceCount = 0;
-  if (faceIdx.length) {
+  if (faceIdx.length && facePos.length) {
+    // Height tint: lerp cool->warm across the level's whole y-range, so the
+    // ramp is consistent level-wide rather than per-mesh. Tint is encoded as
+    // a per-vertex color that modulates Lambert lighting (Gouraud shading).
+    const rangeY = maxY - minY || 1;
+    const faceColor = new Float32Array(faceRawY.length * 3);
+    for (let i = 0; i < faceRawY.length; i++) {
+      const t = THREE.MathUtils.clamp((faceRawY[i] - minY) / rangeY, 0, 1);
+      _tint.copy(meshStyle.tintLow).lerp(meshStyle.tintHigh, t);
+      faceColor[i * 3] = _tint.r;
+      faceColor[i * 3 + 1] = _tint.g;
+      faceColor[i * 3 + 2] = _tint.b;
+    }
+
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.Float32BufferAttribute(facePos, 3));
     geo.setAttribute("color", new THREE.Float32BufferAttribute(faceColor, 3));
     geo.setIndex(new THREE.Uint32BufferAttribute(faceIdx, 1));
-    const mesh = new THREE.Mesh(
-      geo,
-      new THREE.MeshBasicMaterial({
-        vertexColors: true,
-        side: cullBackfaces ? THREE.FrontSide : THREE.DoubleSide,
-        depthWrite: true,
-      })
-    );
+    // Smooth per-vertex normals from the indexed strip -> angle-based Gouraud
+    // lighting: corners between adjacent faces share averaged normals, so the
+    // surface shades smoothly by orientation to the light.
+    geo.computeVertexNormals();
+    // One Lambert material serves both modes; applyToggles just flips the
+    // blending/opacity/depthWrite flags. Additive at 50% avoids the
+    // transparent-sorting artifacts (see MESH_ADDITIVE_OPACITY).
+    const additiveOn = tog.additive && tog.additive.checked;
+    const lambert = new THREE.MeshLambertMaterial({
+      // vertexColors:true folds the Y tint into the Lambert output before
+      // the (per-vertex) Gouraud lighting is applied.
+      vertexColors: true,
+      color: meshStyle.baseLight,
+      transparent: additiveOn,
+      opacity: additiveOn ? MESH_ADDITIVE_OPACITY : 1,
+      blending: additiveOn ? THREE.AdditiveBlending : THREE.NormalBlending,
+      side: cullBackfaces ? THREE.FrontSide : THREE.DoubleSide,
+      depthWrite: !additiveOn,
+      depthTest: true,
+    });
+    const mesh = new THREE.Mesh(geo, lambert);
     mesh.userData = { type: "mesh-faces" };
     meshFacesGroup.add(mesh);
-    state.collisionLines.push(mesh);
     faceCount = faceIdx.length / 3;
   }
-  return { verts: vertTotal, segments: segVerts.length / 6, faces: faceCount };
+  return { verts: vertTotal, faces: faceCount };
 }
 // ---------------------------------------------------------------------------
 // View toggles
@@ -737,7 +726,6 @@ function applyToggles() {
 
   collisionGroup.visible = showCollision;
   meshFacesGroup.visible = tog.faces.checked;
-  meshLinesGroup.visible = tog.lines.checked;
 
   // Back-face culling: with FrontSide, surfaces whose front faces point
   // away from the camera (ceiling bottoms from above, outer wall faces,
@@ -746,9 +734,20 @@ function applyToggles() {
   // player sees" (floors up, ceilings down), so floors stay visible.
   cullBackfaces = tog.cull.checked;
   const cullSide = cullBackfaces ? THREE.FrontSide : THREE.DoubleSide;
+  // Translucent = additive blend at 50% (order-independent, no z-sorting
+  // artifacts); solid = opaque, depth-writing. Same Lambert material either
+  // way — shading and the Y tint stay on permanently.
+  const additiveOn = tog.additive && tog.additive.checked;
   for (const mesh of meshFacesGroup.children) {
     if (mesh.isMesh && mesh.userData.type === "mesh-faces") {
-      mesh.material.side = cullSide;
+      const m = mesh.material;
+      m.side = cullSide;
+      m.transparent = additiveOn;
+      m.opacity = additiveOn ? MESH_ADDITIVE_OPACITY : 1;
+      m.blending = additiveOn ? THREE.AdditiveBlending : THREE.NormalBlending;
+      m.depthWrite = !additiveOn;
+      m.vertexColors = true;
+      m.color.copy(meshStyle.baseLight);
     }
   }
 
@@ -773,28 +772,9 @@ function applyToggles() {
 }
 
 // View toggles
-for (const id of ["tog-points", "tog-links", "tog-paths", "tog-collision", "tog-faces", "tog-lines", "tog-cull", "tog-grid"]) {
+for (const id of ["tog-points", "tog-links", "tog-paths", "tog-collision", "tog-faces", "tog-cull", "tog-grid", "tog-additive"]) {
   $(id).addEventListener("change", applyToggles);
 }
-
-tog.yBottom.addEventListener("change", () => {
-  const tmpV = new THREE.Vector3();
-  for (const { e, mesh, index, edgePos, edgeBase, edgeGeo } of state.boxInstances) {
-    const m = boxMatrix(e);
-    mesh.setMatrixAt(index, m);
-    for (let k = 0; k < unitEdgeVerts.length; k += 3) {
-      tmpV.set(unitEdgeVerts[k], unitEdgeVerts[k + 1], unitEdgeVerts[k + 2]).applyMatrix4(m);
-      const o = edgeBase + k;
-      edgePos[o] = tmpV.x;
-      edgePos[o + 1] = tmpV.y;
-      edgePos[o + 2] = tmpV.z;
-    }
-    if (edgeGeo) edgeGeo.attributes.position.needsUpdate = true;
-  }
-  for (const [, meshes] of state.typeMeshes) {
-    if (meshes.boxes) meshes.boxes.instanceMatrix.needsUpdate = true;
-  }
-});
 
 // ---------------------------------------------------------------------------
 // Picking
@@ -1023,9 +1003,7 @@ window.__nickmapper = {
   spawnType: () => (state.spawn && state.spawn.type) || null,
   collisionVisible: () => collisionGroup.visible,
   collisionParented: () => collisionGroup.parent === scene,
-  collisionLineCount: () => state.collisionLines.length,
   meshFacesVisible: () => meshFacesGroup.visible,
-  meshLinesVisible: () => meshLinesGroup.visible,
   pickAt: (x, y) => {
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.x = ((x - rect.left) / rect.width) * 2 - 1;

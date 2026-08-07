@@ -7,7 +7,6 @@ import { readFileSync } from "node:fs";
 
 const collisionGroup = new THREE.Group();
 const meshFacesGroup = new THREE.Group();
-const meshLinesGroup = new THREE.Group();
 
 const app = readFileSync("web/app.js", "utf8");
 const start = app.indexOf("function loadMeshV2(data) {");
@@ -22,19 +21,30 @@ for (let i = start; i < app.length; i++) {
   }
 }
 const src = app.slice(start, end);
+// Module-scope helpers the extracted fn references (mirror app.js):
+//   - tog.additive toggle (translucent additive vs solid)
+//   - meshStyle tint ramp, the _tint scratch color
+const _THREE = THREE;
+const tog = { additive: { checked: true } };
+const meshStyle = {
+  tintLow: new THREE.Color(0x2e5f8a),
+  tintHigh: new THREE.Color(0x8a6f2e),
+  baseLight: new THREE.Color(0xe8ecf4),
+};
+const _tint = new THREE.Color();
+const MESH_ADDITIVE_OPACITY = 0.5;
 const loadMeshV2 = new Function(
-  "THREE", "collisionGroup", "meshLinesGroup", "meshFacesGroup", "state",
-  "MESH_COLORS", "MESH_STRIP_GAP", "cullBackfaces",
+  "THREE", "collisionGroup", "meshFacesGroup", "state",
+  "cullBackfaces", "tog", "meshStyle", "_tint", "MESH_ADDITIVE_OPACITY",
   `return (${src});`
 )(
-  THREE, collisionGroup, meshLinesGroup, meshFacesGroup,
-  { collisionLines: [] },
-  [[0.5, 0.5, 0.5]], 270, true
+  THREE, collisionGroup, meshFacesGroup,
+  {},
+  true, tog, meshStyle, _tint, MESH_ADDITIVE_OPACITY
 );
 
-// mirror app.js module scope: sub-groups live inside collisionGroup
+// mirror app.js module scope: the sub-group lives inside collisionGroup
 collisionGroup.add(meshFacesGroup);
-collisionGroup.add(meshLinesGroup);
 
 let ok = true;
 const files = [
@@ -51,19 +61,17 @@ for (let fi = 0; fi < files.length; fi++) {
     // if they stay orphaned, the mesh renders nothing and toggles are dead)
     collisionGroup.clear();
     collisionGroup.add(meshFacesGroup);
-    collisionGroup.add(meshLinesGroup);
   }
   const f = files[fi];
   const data = JSON.parse(readFileSync(f, "utf8"));
   const res = loadMeshV2(data);
-  const faceMeshes = [], lineMeshes = [];
-  for (const g of [collisionGroup, meshFacesGroup, meshLinesGroup]) {
+  const faceMeshes = [];
+  for (const g of [collisionGroup, meshFacesGroup]) {
     for (const c of g.children) {
       if (c.isMesh) faceMeshes.push(c);
-      else if (c.isLineSegments) lineMeshes.push(c);
     }
   }
-  let tris = 0, segs = 0;
+  let tris = 0;
   for (const m of faceMeshes) {
     const idx = m.geometry.getIndex();
     if (idx) tris += idx.count / 3;
@@ -71,8 +79,11 @@ for (let fi = 0; fi < files.length; fi++) {
     for (let i = 0; i < pos.count * 3; i++) {
       if (!Number.isFinite(pos.array[i])) { console.log(`NaN in ${f}`); ok = false; }
     }
+    // Gouraud shading relies on smooth per-vertex normals.
+    const nrm = m.geometry.attributes.normal;
+    if (!nrm) { console.log(`no normals in ${f}`); ok = false; }
+    else if (nrm.count !== pos.count) { console.log(`normal count != pos in ${f}`); ok = false; }
   }
-  for (const l of lineMeshes) segs += l.geometry.attributes.position.count / 2;
   // index bounds
   for (const m of faceMeshes) {
     const idx = m.geometry.getIndex();
@@ -83,18 +94,18 @@ for (let fi = 0; fi < files.length; fi++) {
     }
   }
   const name = f.split("/").pop().padEnd(38);
-  const match = tris === res.faces && segs === res.segments;
+  const match = tris === res.faces;
   console.log(
-    `${name} res={verts:${res.verts}, faces:${res.faces}, segments:${res.segments}}` +
-    `  built: ${tris} tris, ${segs} segs  ${match ? "OK" : "MISMATCH!"}`
+    `${name} res={verts:${res.verts}, faces:${res.faces}}` +
+    `  built: ${tris} tris  ${match ? "OK" : "MISMATCH!"}`
   );
   if (!match) ok = false;
   // parenting checks (the orphan bug: clearView() used to drop these)
-  if (meshFacesGroup.parent !== collisionGroup || meshLinesGroup.parent !== collisionGroup) {
+  if (meshFacesGroup.parent !== collisionGroup) {
     console.log(`GROUPS ORPHANED after ${f}`);
     ok = false;
   }
-  for (const g of [collisionGroup, meshFacesGroup, meshLinesGroup]) g.children.length = 0;
+  for (const g of [collisionGroup, meshFacesGroup]) g.children.length = 0;
 }
 console.log(ok ? "\nALL OK" : "\nFAILURES");
 process.exit(ok ? 0 : 1);

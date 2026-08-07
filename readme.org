@@ -20,8 +20,8 @@ port of parser.lua; three.js is vendored in web/vendor/, so it works offline).
 Controls: left-drag to rotate, right-drag to pan, wheel to zoom (toward the
 cursor), click to inspect an entity, double-click to fly to it, and a
 "Jump to Danny" button that flies to the starting character.
-The panel lets you toggle points/links/paths/grid, filter individual entity
-types, and switch "Position.y = box bottom vs center". All boxes render as
+The panel lets you toggle points/links/paths/grid and filter individual
+entity types. All boxes render as
 edge outlines (no solid mode) so nothing hides the level; an invisible pick
 proxy keeps them clickable — but hidden types are not clickable. Name labels
 show only for ADanny and APropTriggerEndLevel, unconditionally.
@@ -37,11 +37,23 @@ mesh is a GX-style INDEXED triangle strip: the mesh record's 0x98 index
 block walks (posIdx, nrmIdx, texIdx) per strip vertex and the repeated-index
 (degenerate) triangles are the engine's strip-restart markers, so the
 faces are the strip's real triangles (the old "vertex run is the strip"
-reading drew faces from the wrong indices — fixed this session). Colors
-cycle by mesh index. Controls: "Mesh geometry" shows/hides the group,
-"Mesh faces (solid)" the surfaces (default on), "Mesh lines (wireframe)"
-overlays the strip's consecutive-run edges (deduped, so the long strip
-diagonals stay hidden). "Cull back faces (see through roofs/walls)" is on
+reading drew faces from the wrong indices — fixed this session). The
+solid faces now render as one uniform translucent shell instead of the
+rainbow-per-mesh look: all faces share a single style that's Gouraud
+shaded by the scene lights (smooth per-vertex normals via
+computeVertexNormals, so angle-based lighting makes floors/roofs/walls
+read by orientation) and tinted by height — a subtle cool->warm ramp
+(blue low, amber high) spread across the level's y-range. Shading and
+tint are always on; the only knob is "Translucent faces (additive
+blend)" (off by default — handy but reads too analytical): translucent
+uses ADDITIVE blending at 50% opacity with depthWrite off — addition is
+order-independent, so the classic semitransparent z-sorting artifacts
+(distant faces popping through nearer ones) become brighter glows on
+overlap instead; the default leaves the faces as a solid opaque,
+depth-writing surface. Controls: "Mesh
+geometry" shows/hides the group,
+"Mesh faces (solid)" the surfaces (default on). "Cull back faces (see
+through roofs/walls)" is on
 by default: the solid meshes render with THREE.FrontSide, so surfaces whose
 front faces point away from the camera (ceiling bottoms from above, outer
 wall faces, floor undersides) are culled and entities inside buildings show

@@ -66,9 +66,6 @@
 
   .tog { display: flex; align-items: center; gap: 8px; padding: 2px 0; cursor: pointer; user-select: none; }
   .tog input { accent-color: var(--accent); }
-  .slider-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-  .slider-row input[type=range] { flex: 1; accent-color: var(--accent); }
-  .slider-row span { width: 52px; text-align: right; color: var(--dim); font-size: 11px; }
   .btn-row { display: flex; gap: 6px; margin-bottom: 8px; }
   .btn {
     background: #2a3040; color: var(--text); border: 1px solid var(--panel-border);
@@ -145,10 +142,11 @@
       <label class="tog"><input type="checkbox" id="tog-paths" checked> Paths</label>
       <label class="tog"><input type="checkbox" id="tog-collision" checked> Mesh geometry</label>
       <label class="tog"><input type="checkbox" id="tog-faces" checked> Mesh faces (solid)</label>
-      <label class="tog"><input type="checkbox" id="tog-lines"> Mesh lines (wireframe)</label>
       <label class="tog"><input type="checkbox" id="tog-cull" checked> Cull back faces (see through roofs/walls)</label>
       <label class="tog"><input type="checkbox" id="tog-grid" checked> Grid</label>
-      <label class="tog"><input type="checkbox" id="tog-ybottom"> Treat Position.y as box bottom</label>
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--panel-border)">
+        <label class="tog"><input type="checkbox" id="tog-additive"> Translucent faces (additive blend)</label>
+      </div>
     </div>
     <div class="section scroll">
       <div id="legend-head">
