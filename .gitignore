@@ -2,3 +2,5 @@ out/
 output/
 .pi-subagents/
 *.pid
+scripts/dol/gdbstub/scan3.log
+scripts/dol/gdbstub/scan3.out
