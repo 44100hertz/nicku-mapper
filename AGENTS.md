@@ -1,0 +1,5 @@
+ - Decomp is the only true source of truth
+ - Game data is the second source of truth
+ - Toshi decoding is just a hint/guide
+ - We shouldn't need to use any heuristics
+ - Use vision to verify your edits
