@@ -1,6 +1,9 @@
 # Collision status
 
 > Live-debugging tooling + protocol knowledge: `scripts/dol/gdbstub/README.md`.
+> Read its ⚠️ OPERATIONAL DOCTRINE before touching the stub: the connection
+> is ONE-SHOT — no port probing, one persistent driver process, all probes
+> through its command channel.
 
 # Collision — status
 

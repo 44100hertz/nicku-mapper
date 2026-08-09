@@ -4,6 +4,46 @@ Everything learned the painful way during the collision-format investigation.
 Read this BEFORE touching the emulator again, or you will re-live the dance
 (connect → connection dies → relaunch game → repeat).
 
+## ⚠️ OPERATIONAL DOCTRINE — one shot, keep the ball in the air
+
+Dolphin's GDB stub is finicky and immature, but it does work. Treat the
+connection like an audition: **you get ONE SHOT**. After a failed attempt,
+nobody can help you restart the emulator. Internalize these rules:
+
+1. **Do NOT probe / smoke-test the port.** Every TCP connect is a roll of
+the dice with the stub's single-connection accept. `echo > /dev/tcp/
+127.0.0.1/2159`, `nc`, `ss`-then-connect checks, “just seeing if it's
+open” — all of it is how you burn the shot. If you must know the state,
+check `ss` for a LISTEN socket only; do not connect.
+2. **Implement the connection correctly ONE time**, as a persistent
+"driver" process that connects once, never exits, never disconnects, and
+serves a command channel (UNIX socket) that you probe with separate
+scripts. All investigation traffic goes through that channel. The
+connection itself is never touched again.
+3. **The driver must survive everything**: launch it detached
+(`setsid nohup … &`, `disown`), with retry-on-connect at startup (the
+stub may take seconds to come up with the game) — but once connected,
+never drop it. Never exit it, never kill it, never let a tool call own
+its lifetime. A stub whose client disappears closes the listener forever
+until the game is relaunched.
+4. **If the first connection fails, stop and admit failure.** Do not go
+down rabbit holes of overthinking. You are not as smart as the emulator
+itself; do not try to solve the halting problem. Report, regroup, and
+only retry when the operator can relaunch the game for you.
+5. **Keep the ball in the air.** One long-lived connection, many probes
+through it. The moment you "drop" it (probe, disconnect, kill, crash),
+the game has to be relaunched.
+
+Concrete failure post-mortem (this session): the operator reloaded the
+emulator and warned the connection was one-shot; the driver was launched
+before the stub was listening (single connect, no retry → ConnectionRefused
+→ driver exited); then the port was probed directly with `/dev/tcp`
+connect/close checks to "verify" it — exactly the act that can consume the
+stub's accept and kill the listener. The correct pattern, which exists in
+this directory, is `scan3.py` (persistent driver: connects once, arms
+breakpoints/watchpoints, logs every stop to `scan3.log`, serves commands
+on `/tmp/scan3.sock`) + `scan3cmd.py` (probe client). Never bypass them.
+
 ## TL;DR checklist
 
 1. Dolphin must run with **Cached Interpreter** (JIT breaks the stub: host
