@@ -74,17 +74,15 @@ than guess (the old 3/4/5-byte search also mislabeled the recw-6/7 flags
 0x06020201/0x06020101 as a "shared-pool" variant; they decode fine once
 the search includes recw 6/7).
 
-The per-mesh collision blocks — (flag, x, z, y) s8 records that follow each
-vertex pool — are exported to the JSON (each mesh's "coll" array) and the
-viewer draws them as flag-colored footprint overlays (toggle "Collision
-footprints (flags)", off by default): the (x, z) bytes quantize against
-the mesh's own vertex bbox per axis (world = bmin + (s8+128)*(bmax-bmin)/
-255; verified across 407k records, median coll→geometry distance ~1.2 u)
-and the flag byte maps to the engine's collision properties (char/water/
-goo/phase/damage/kback/kbackdam/nopathfind for bits 0-7, from the DOL
-string table; 0x00 = default solid 71%, 0x01 char 12%, 0xFF all-bits 7%).
-The exact flag semantics and the ±0.08 u transform inset still need a
-Dolphin trace (see asset-extract/docs/trb-format-notes.md §4c).
+The per-mesh collision blocks that follow each vertex pool are exported as
+raw bytes only (each mesh's "coll" array, "collFormat": "unknown") — the
+byte extractor is kept, but nothing interprets the bytes. The collision
+mesh format is UNKNOWN: every 8-bit coordinate reading tried so far (4-byte
+(flag,x,y,z) s8 records with a (s8+128)/255 bbox dequant, the later 3-byte
+u8-triple "walkmesh", 5-byte walls) was an unverified structural hypothesis
+and is unlikely to be correct (see docs/collision-status.md). The footprint
+overlay and footprints JSONs were removed (blank slate) until the DOL's
+collision reader is located (Dolphin trace).
 
 Source: the gcn+wii/extract project's nicku-ntsc/P-GNOE/files/Data/<level>/
 (*.trb level parts — selection is name-agnostic: any file whose SYMB table
@@ -92,8 +90,9 @@ lists W0C0M meshes, so the DP naming quirks DPWorld_Level01_01.trb /
 DPWorld_Detail_level02_01.trb work). The old 5-byte "wall column" reading
 was wrong: those arrays were NameHash coincidences. The real geometry is
 mesh-based — 86+ per-part meshes, each a 52-byte record (center + radius,
-offsets, count, format flag) plus a C-block of u8 triples quantized to the
-record bounds (the C-block walkmesh is extracted by trb_collision.py).
+offsets, count, format flag) plus a C-block whose contents are not yet
+decoded — an earlier u8-triple "walkmesh" reading is probably wrong, and
+the collision mesh format is unknown.
 
 Verified: scale 1/64 confirmed for all level parts (mesh-record centers
 match vertex-run midpoints); with the y sign corrected (file y is +y down)
@@ -149,8 +148,9 @@ k+1 — level-global mesh tables (DPWorld_Level04_01_Detail, JN parts
 chunk as the pool. With the fix: 8,916/9,127 meshes carry faces (97.7%%),
 no triangle exceeds ~2x its record radius. Still open: meshes whose
 +0x10 relocates to section 0 (their pools live in the SECT — a true
-shared pool, still undecoded), the C-block walkmesh face semantics, and
-the texture pipeline —
+shared pool, still undecoded), the collision mesh format (the C-block's
+u8-triple "walkmesh" reading is probably wrong), and the texture
+pipeline —
 the .ttl files hold the textures (TGA-named entries, raw pixel data) and
 chunks hold UV arrays, but the UV count mapping and the texture format
 are unsolved (see asset-extract/docs/trb-format-notes.md §10). The main.dol was set up
@@ -189,8 +189,8 @@ spec.org is fully done now — the 3D web viewer covers the "fancy stuff".
 Still open on the geometry side: the texture pipeline (the .ttl files hold
 the textures and chunks hold UV arrays, but the UV count mapping and
 texture format are unsolved), meshes whose pool lives in the shared SECT
-section, and the exact collision flag semantics / s8 transform (needs a
-Dolphin trace; the flag-colored footprint overlay is in the viewer already
-— see §4c-4e in asset-extract/docs/trb-format-notes.md for the sibling-
-engine comparison, the OpCODE finding, and the SECT+0x38AC polygon list
-that is the best "dedicated collision" candidate).
+section, and the collision mesh format (unknown — the flag/s8 and u8-triple
+byte-readings were unverified hypotheses; needs a Dolphin trace — see
+§4c-4e in asset-extract/docs/trb-format-notes.md for the sibling-engine
+comparison, the OpCODE finding, and the SECT+0x38AC polygon list that is
+the best "dedicated collision" candidate).

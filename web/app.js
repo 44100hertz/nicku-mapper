@@ -29,7 +29,6 @@ const tog = {
   paths: $("tog-paths"),
   collision: $("tog-collision"),
   faces: $("tog-faces"),
-  collfoot: $("tog-collfoot"),
   cull: $("tog-cull"),
   grid: $("tog-grid"),
   additive: $("tog-additive"),
@@ -123,6 +122,41 @@ const selGroup = new THREE.Group();
 selGroup.visible = false;
 scene.add(selGroup);
 
+// Marker group for user-placed collision markers (press P to place)
+const markerGroup = new THREE.Group();
+scene.add(markerGroup);
+state.markers = [];
+
+// Crosshair preview at camera target (shows where P will place a marker)
+const crosshair = new THREE.LineSegments(
+  new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(-0.5, 0, 0), new THREE.Vector3(0.5, 0, 0),
+    new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, 0.5, 0),
+    new THREE.Vector3(0, 0, -0.5), new THREE.Vector3(0, 0, 0.5),
+  ]),
+  new THREE.LineBasicMaterial({ color: 0xff4444, transparent: true, opacity: 0.7, depthTest: false })
+);
+scene.add(crosshair);
+
+function placeMarker(pos, color = 0xff4444) {
+  const sphere = new THREE.Mesh(
+    new THREE.SphereGeometry(0.4, 16, 12),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, depthTest: true })
+  );
+  sphere.position.copy(pos);
+  markerGroup.add(sphere);
+  const div = document.createElement("div");
+  div.className = "marker-label";
+  div.style.cssText = "color:#ff6666;font-size:11px;font-weight:bold;text-shadow:0 0 4px #000;";
+  div.textContent = `${state.markers.length}: ${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)}`;
+  const label = new CSS2DObject(div);
+  label.position.copy(pos).add(new THREE.Vector3(0, 0.8, 0));
+  markerGroup.add(label);
+  state.markers.push({ pos: pos.clone(), sphere, label });
+  statusEl.textContent = `Marker ${state.markers.length} at (${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)})`;
+  console.log(`MARKER ${state.markers.length}: (${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})`);
+}
+
 const selBox = new THREE.LineSegments(
   new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
   new THREE.LineBasicMaterial({ color: 0xffd400 })
@@ -208,6 +242,8 @@ function clearView() {
   collisionGroup.traverse(dispose);
   viewGroup.clear();
   collisionGroup.clear();
+  markerGroup.traverse(dispose);
+  markerGroup.clear();
   // clear() removed the sub-group; re-parent so loadMeshV2 can fill it.
   // The sub-group's OLD children (the previous level's meshes) survive
   // collisionGroup.clear() — drop them here, or the previous level's mesh
@@ -215,9 +251,7 @@ function clearView() {
   // levels whose collision JSON 404s). Their geometries were disposed by
   // the traverse above.
   collisionGroup.add(meshFacesGroup);
-  collisionGroup.add(collFootGroup);
   meshFacesGroup.clear();
-  collFootGroup.clear();
   selGroup.visible = false;
   state.entities = [];
   state.byName.clear();
@@ -230,6 +264,7 @@ function clearView() {
   state.selection = null;
   state.spawn = null;
   state.missingLinks = 0;
+  state.markers = [];
   infoTitleEl.textContent = "Nothing selected";
   infoEl.innerHTML = "<div class='hint'>Click an entity to inspect it.</div>";
 }
@@ -491,7 +526,7 @@ async function loadLevel(dir) {
     const coll = (await loadCollision(dir)) || null;
     const meshTxt =
       coll && coll.verts
-        ? ` · ${coll.verts} mesh verts · ${coll.faces} faces${coll.footRecords ? ` · ${coll.footRecords} coll pts` : ""}`
+        ? ` · ${coll.verts} mesh verts · ${coll.faces} faces`
         : "";
     frameCamera();
     buildLegend();
@@ -595,65 +630,17 @@ let cullBackfaces = true;
 const meshFacesGroup = new THREE.Group();
 collisionGroup.add(meshFacesGroup);
 
-// ---------------------------------------------------------------------------
-// Collision footprints — the per-mesh (flag, x, y, z) s8 blocks ("coll")
-// ---------------------------------------------------------------------------
-// Each mesh's "coll" array is the game's collision data: 4-byte records
-// (flag, x, y, z), all s8, exported by trb_mesh.py --web from the block that
-// follows the mesh's vertex pool (record +0x14 -> +0x18). The (x, z) bytes
-// are quantized against the mesh's OWN vertex bbox per axis — world =
-// bmin + (s8 + 128) * (bmax - bmin) / 255 — and the 3rd byte is a small
-// height offset in world units below the mesh's top surface (0..-3, drawn
-// at meshTopY + y + EPS). Consecutive records trace the collision footprint
-// outline in the (x, z) plane (floors/walls as closed AABB loops).
-//
-// The flag byte is a bitmask over the engine's collision property names
-// (main.dol string table): char / water / goo / phase / damage / kback /
-// kbackdam / nopathfind for bits 0..7 (pathonly/cameraonly/noocclude don't
-// fit a byte). 0x00 = default solid; 0xFF = all bits set (a special value,
-// 6.8% of records). Verified 2025-08: flags 0 (71%), 1 (12%), 255 (7%),
-// 2 (3%), 3, 254, 4... and identical geometry copies carry identical flags.
-const collFootGroup = new THREE.Group();
-collisionGroup.add(collFootGroup);
-
-// Per-bit colors for the 8 encodable collision properties.
-const COLL_FLAG_BITS = [
-  { bit: 0x01, name: "char", color: 0x3ddc84 }, // solid / character-walkable
-  { bit: 0x02, name: "water", color: 0x3a86ff },
-  { bit: 0x04, name: "goo", color: 0x8ac926 },
-  { bit: 0x08, name: "phase", color: 0xf15bb5 },
-  { bit: 0x10, name: "damage", color: 0xff4d4d },
-  { bit: 0x20, name: "kback", color: 0xff9f1c },
-  { bit: 0x40, name: "kbackdam", color: 0xe85d04 },
-  { bit: 0x80, name: "nopathfind", color: 0x6c757d },
-];
-const COLL_FLAG_NONE = 0x00; // default solid — dim gray
-const COLL_FLAG_ALL = 0xff; // all bits — white
-
-const _flagColor = new THREE.Color();
-function collFlagColor(flag) {
-  if (flag === COLL_FLAG_NONE) return _flagColor.set(0x8b93a5);
-  if (flag === COLL_FLAG_ALL) return _flagColor.set(0xffffff);
-  let r = 0, g = 0, b = 0, n = 0;
-  for (const { bit, color } of COLL_FLAG_BITS) {
-    if (flag & bit) {
-      _flagColor.set(color);
-      r += _flagColor.r;
-      g += _flagColor.g;
-      b += _flagColor.b;
-      n++;
-    }
-  }
-  if (!n) return _flagColor.set(0x8b93a5);
-  _flagColor.setRGB(r / n, g / n, b / n);
-  return _flagColor;
-}
+// Collision classification: NOT YET REVERSE-ENGINEERED.
+// The per-mesh "coll" footprint arrays exist and the engine links
+// OpCODE, but the collision mesh format is UNKNOWN — every 8-bit
+// coordinate reading tried so far (u8 triples, (flag,x,y,z) s8 records)
+// was an unverified hypothesis (see docs/collision-status.md); the
+// footprint decode is a placeholder (origin markers).
+// Until the real DOL reader is found, ALL mesh geometry renders uniformly.
+const MESH_COLOR = 0x7799aa;  // blue-gray
 
 async function loadCollision(dir) {
-  // Only fetch levels that actually have collision data (manifest written by
-  // trb_mesh.py --web). Levels without it (JimmyNeutronLab, Level4 parts,
-  // TestWorld) otherwise 404 in the console on every load.
-  if (collisionManifest && !collisionManifest.includes(dir)) return null;
+  // Fetch mesh-v2 data for any level — manifest is optional.
   const res = await fetch(`./collision/${dir}.json`);
   if (!res.ok) return null;
   const data = await res.json();
@@ -674,6 +661,7 @@ function loadMeshV2(data) {
   const div = data.div || 64;
   const facePos = [];
   const faceIdx = [];
+  const matGroups = {};
   // Per-vertex world-up positions drive both normals and the Y tint.
   const faceRawY = [];
   let minY = Infinity;
@@ -711,6 +699,7 @@ function loadMeshV2(data) {
           faceRawY.push(pos[i * 3 + 1]);
         }
         const L = faces.length;
+        const fstart = faceIdx.length;
         for (let i = 0; i < L - 2; i++) {
           const a = faces[i];
           const b = faces[i + 1];
@@ -718,6 +707,16 @@ function loadMeshV2(data) {
           if (a === b || b === c || a === c) continue;
           if (i % 2) faceIdx.push(fbase + b, fbase + a, fbase + c);
           else faceIdx.push(fbase + a, fbase + b, fbase + c);
+        }
+        const fend = faceIdx.length;
+        // Group all faces together — we don't have verified collision
+        // classification yet, so everything renders uniformly.
+        if (fend > fstart) {
+          const key = "mesh";
+          if (!matGroups[key]) {
+            matGroups[key] = { ranges: [], color: new THREE.Color(MESH_COLOR) };
+          }
+          matGroups[key].ranges.push([fstart, fend]);
         }
       }
       // Meshes without an indexed strip (undecoded variant formats) render
@@ -727,137 +726,58 @@ function loadMeshV2(data) {
   }
   let faceCount = 0;
   if (faceIdx.length && facePos.length) {
-    // Height tint: lerp cool->warm across the level's whole y-range, so the
-    // ramp is consistent level-wide rather than per-mesh. Tint is encoded as
-    // a per-vertex color that modulates Lambert lighting (Gouraud shading).
-    const rangeY = maxY - minY || 1;
+    // Color array per vertex (faceRawY.length entries)
     const faceColor = new Float32Array(faceRawY.length * 3);
-    for (let i = 0; i < faceRawY.length; i++) {
-      const t = THREE.MathUtils.clamp((faceRawY[i] - minY) / rangeY, 0, 1);
-      _tint.copy(meshStyle.tintLow).lerp(meshStyle.tintHigh, t);
-      faceColor[i * 3] = _tint.r;
-      faceColor[i * 3 + 1] = _tint.g;
-      faceColor[i * 3 + 2] = _tint.b;
+    for (const [mat, grp] of Object.entries(matGroups)) {
+      const col = grp.color;
+      for (const [s, e] of grp.ranges) {
+        // Walk the index buffer to find which vertices this face range uses
+        const seen = new Set();
+        for (let fi = s; fi < e; fi++) seen.add(faceIdx[fi]);
+        for (const vi of seen) {
+          faceColor[vi * 3] = col.r;
+          faceColor[vi * 3 + 1] = col.g;
+          faceColor[vi * 3 + 2] = col.b;
+        }
+      }
     }
 
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.Float32BufferAttribute(facePos, 3));
-    geo.setAttribute("color", new THREE.Float32BufferAttribute(faceColor, 3));
-    geo.setIndex(new THREE.Uint32BufferAttribute(faceIdx, 1));
-    // Smooth per-vertex normals from the indexed strip -> angle-based Gouraud
-    // lighting: corners between adjacent faces share averaged normals, so the
-    // surface shades smoothly by orientation to the light.
-    geo.computeVertexNormals();
-    // One Lambert material serves both modes; applyToggles just flips the
-    // blending/opacity/depthWrite flags. Additive at 50% avoids the
-    // transparent-sorting artifacts (see MESH_ADDITIVE_OPACITY).
+    // Build per-material sub-meshes so each material can be toggled
     const additiveOn = tog.additive && tog.additive.checked;
-    const lambert = new THREE.MeshLambertMaterial({
-      // vertexColors:true folds the Y tint into the Lambert output before
-      // the (per-vertex) Gouraud lighting is applied.
-      vertexColors: true,
-      color: meshStyle.baseLight,
-      transparent: additiveOn,
-      opacity: additiveOn ? MESH_ADDITIVE_OPACITY : 1,
-      blending: additiveOn ? THREE.AdditiveBlending : THREE.NormalBlending,
-      side: cullBackfaces ? THREE.FrontSide : THREE.DoubleSide,
-      depthWrite: !additiveOn,
-      depthTest: true,
-    });
-    const mesh = new THREE.Mesh(geo, lambert);
-    mesh.userData = { type: "mesh-faces" };
-    meshFacesGroup.add(mesh);
+    const matList = [];
+    for (const [mat, grp] of Object.entries(matGroups)) {
+      matList.push(mat);
+      // Collect all face indices for this material
+      const subFaces = [];
+      for (const [s, e] of grp.ranges) {
+        for (let fi = s; fi < e; fi++) subFaces.push(faceIdx[fi]);
+      }
+      if (subFaces.length === 0) continue;
+      const subGeo = new THREE.BufferGeometry();
+      subGeo.setAttribute("position", new THREE.Float32BufferAttribute(facePos, 3));
+      subGeo.setAttribute("color", new THREE.Float32BufferAttribute(faceColor, 3));
+      subGeo.setIndex(new THREE.Uint32BufferAttribute(subFaces, 1));
+      subGeo.computeVertexNormals();
+      const lambert = new THREE.MeshLambertMaterial({
+        vertexColors: true,
+        color: meshStyle.baseLight,
+        transparent: additiveOn,
+        opacity: additiveOn ? MESH_ADDITIVE_OPACITY : 1,
+        blending: additiveOn ? THREE.AdditiveBlending : THREE.NormalBlending,
+        side: cullBackfaces ? THREE.FrontSide : THREE.DoubleSide,
+        depthWrite: !additiveOn,
+        depthTest: true,
+      });
+      const subMesh = new THREE.Mesh(subGeo, lambert);
+      subMesh.userData = { type: "mesh-faces", matKey: mat };
+      meshFacesGroup.add(subMesh);
+    }
     faceCount = faceIdx.length / 3;
+
+    meshFacesGroup.userData._matGroups = matGroups;
   }
 
-  // ---- collision footprints (per-mesh "coll" (flag,x,y,z) s8 blocks) ----
-  const segPos = [];
-  const segCol = [];
-  const ptPos = [];
-  const ptCol = [];
-  let footRecords = 0;
-  const footEps = 0.35; // lift the overlay above the top surface
-  for (const part of data.parts || []) {
-    for (const m of part.meshes || []) {
-      const v = m.verts || [];
-      const c = m.coll;
-      const nv = v.length / 3;
-      if (!c || c.length < 8 || nv < 2) continue;
-      // x/z quantize against the mesh's own vertex bbox (per axis); the
-      // footprint plane sits just below the mesh's top surface.
-      let xmin = Infinity, xmax = -Infinity, zmin = Infinity, zmax = -Infinity;
-      let ymax = -Infinity;
-      for (let i = 0; i < nv; i++) {
-        const wx = v[i * 3] / div;
-        const wz = -v[i * 3 + 1] / div;
-        const wy = v[i * 3 + 2] / div;
-        if (wx < xmin) xmin = wx;
-        if (wx > xmax) xmax = wx;
-        if (wz < zmin) zmin = wz;
-        if (wz > zmax) zmax = wz;
-        if (wy > ymax) ymax = wy;
-      }
-      if (!(xmax > xmin && zmax > zmin)) continue;
-      const nr = Math.floor(c.length / 4);
-      const pts = [];
-      for (let i = 0; i < nr; i++) {
-        const flag = c[i * 4];
-        const x = c[i * 4 + 1], y = c[i * 4 + 2], z = c[i * 4 + 3];
-        const wx = xmin + ((x + 128) * (xmax - xmin)) / 255;
-        const wz = zmin + ((z + 128) * (zmax - zmin)) / 255;
-        const wy = ymax + y + footEps;
-        pts.push([wx, wy, wz, flag]);
-        ptPos.push(wx, wy, wz);
-        collFlagColor(flag);
-        ptCol.push(_flagColor.r, _flagColor.g, _flagColor.b);
-        footRecords++;
-      }
-      // Outline segments: consecutive records trace the footprint loop.
-      for (let i = 1; i < pts.length; i++) {
-        const a = pts[i - 1], b = pts[i];
-        segPos.push(a[0], a[1], a[2], b[0], b[1], b[2]);
-        collFlagColor(a[3]);
-        segCol.push(_flagColor.r, _flagColor.g, _flagColor.b);
-        collFlagColor(b[3]);
-        segCol.push(_flagColor.r, _flagColor.g, _flagColor.b);
-      }
-    }
-  }
-  if (segPos.length) {
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.Float32BufferAttribute(segPos, 3));
-    geo.setAttribute("color", new THREE.Float32BufferAttribute(segCol, 3));
-    const lines = new THREE.LineSegments(
-      geo,
-      new THREE.LineBasicMaterial({
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.95,
-        depthWrite: false,
-      })
-    );
-    lines.userData = { type: "coll-footprints" };
-    collFootGroup.add(lines);
-  }
-  if (ptPos.length) {
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.Float32BufferAttribute(ptPos, 3));
-    geo.setAttribute("color", new THREE.Float32BufferAttribute(ptCol, 3));
-    const pts = new THREE.Points(
-      geo,
-      new THREE.PointsMaterial({
-        vertexColors: true,
-        size: 0.5,
-        sizeAttenuation: true,
-        transparent: true,
-        opacity: 0.9,
-        depthWrite: false,
-      })
-    );
-    pts.userData = { type: "coll-footprints" };
-    collFootGroup.add(pts);
-  }
-  return { verts: vertTotal, faces: faceCount, footRecords };
+  return { verts: vertTotal, faces: faceCount };
 }
 // ---------------------------------------------------------------------------
 // View toggles
@@ -871,9 +791,6 @@ function applyToggles() {
 
   collisionGroup.visible = showCollision;
   meshFacesGroup.visible = tog.faces.checked;
-  collFootGroup.visible = tog.collfoot && tog.collfoot.checked;
-  const collLegendEl = document.getElementById("coll-legend");
-  if (collLegendEl) collLegendEl.style.display = tog.collfoot && tog.collfoot.checked ? "" : "none";
 
   // Back-face culling: with FrontSide, surfaces whose front faces point
   // away from the camera (ceiling bottoms from above, outer wall faces,
@@ -919,39 +836,20 @@ function applyToggles() {
   }
 }
 
-// Static legend for the collision flag colors (built once).
+// Collision status legend.
 function buildCollLegend() {
   const list = document.getElementById("coll-legend-list");
   if (!list || list.childElementCount) return;
-  const rows = [
-    { v: COLL_FLAG_NONE, name: "0x00 default (solid)" },
-    ...COLL_FLAG_BITS.map((b) => ({
-      v: b.bit,
-      name: `0x${b.bit.toString(16).padStart(2, "0")} ${b.name}`,
-      color: b.color,
-    })),
-    { v: COLL_FLAG_ALL, name: "0xff all bits" },
-  ];
-  for (const r of rows) {
-    const row = document.createElement("div");
-    row.style.display = "flex";
-    row.style.alignItems = "center";
-    row.style.gap = "6px";
-    const dot = document.createElement("span");
-    dot.className = "legend-dot";
-    const col = r.color !== undefined ? r.color : r.v === COLL_FLAG_NONE ? 0x8b93a5 : 0xffffff;
-    dot.style.background = `#${col.toString(16).padStart(6, "0")}`;
-    row.appendChild(dot);
-    const name = document.createElement("span");
-    name.textContent = r.name;
-    row.appendChild(name);
-    list.appendChild(row);
-  }
+  list.innerHTML = '<span style="color:var(--dim)">' +
+    'Mesh collision: unverified. Needs Dolphin trace.<br>' +
+    'Entity volumes (boxes): verified gameplay boundaries.<br>' +
+    'AWorldSectionVolume, ADeathZone, ABarrier, etc.' +
+    '</span>';
 }
 buildCollLegend();
 
 // View toggles
-for (const id of ["tog-points", "tog-links", "tog-paths", "tog-collision", "tog-faces", "tog-collfoot", "tog-cull", "tog-grid", "tog-additive"]) {
+for (const id of ["tog-points", "tog-links", "tog-paths", "tog-collision", "tog-faces", "tog-cull", "tog-grid", "tog-additive"]) {
   $(id).addEventListener("change", applyToggles);
 }
 
@@ -1117,6 +1015,7 @@ const clock = new THREE.Clock();
 function animate() {
   requestAnimationFrame(animate);
   controls.update(clock.getDelta());
+  crosshair.position.copy(controls.target);
   renderer.render(scene, camera);
   labelRenderer.render(scene, camera);
 }
@@ -1132,14 +1031,49 @@ function onResize() {
 }
 window.addEventListener("resize", onResize);
 
+// Keyboard: P = place marker at camera target, M = print all markers to console
+window.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  if (e.key === "p" || e.key === "P") {
+    placeMarker(controls.target.clone());
+  }
+  if (e.key === "m" || e.key === "M") {
+    console.log("=== MARKERS ===");
+    state.markers.forEach((m, i) => {
+      console.log(`  ${i}: (${m.pos.x.toFixed(3)}, ${m.pos.y.toFixed(3)}, ${m.pos.z.toFixed(3)})`);
+    });
+    if (state.markers.length === 0) console.log("  (none)");
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
 // Allow deep-linking: http://host/web/#SpongeBobLevel2
-const initial = location.hash.slice(1);
+// Optional debug flags: &cam=x,y,z = set camera position (e.g. top-down:
+// 0,60,0.1), &tgt=x,y,z.
+const _q = location.hash.split("&").slice(1);
+const _get = (k) => {
+  const e = _q.find((s) => s.startsWith(k + "="));
+  return e ? e.slice(k.length + 1) : null;
+};
+const camPos = _get("cam") ? _get("cam").split(",").map(Number) : null;
+const camTgt = _get("tgt") ? _get("tgt").split(",").map(Number) : null;
+const initial = location.hash.slice(1).split("&")[0];
 const initialLevel = LEVELS.some((l) => l.dir === initial) ? initial : LEVELS[0].dir;
 levelSelect.value = initialLevel;
 loadLevel(initialLevel);
+
+// Debug camera override (hash flags) after the level loads.
+if (camPos || camTgt) {
+  const _apply = () => {
+    if (camPos) camera.position.set(camPos[0], camPos[1], camPos[2]);
+    if (camTgt) controls.target.set(camTgt[0], camTgt[1], camTgt[2]);
+    controls.update();
+  };
+  if (state.bounds) _apply();
+  else setTimeout(() => { if (state.bounds) _apply(); else _apply(); }, 1500);
+}
 
 // Test/debug hooks (used by headless smoke tests; harmless otherwise)
 window.__nickmapper = {
@@ -1182,12 +1116,6 @@ window.__nickmapper = {
   spawnType: () => (state.spawn && state.spawn.type) || null,
   collisionVisible: () => collisionGroup.visible,
   collisionParented: () => collisionGroup.parent === scene,
-  collFootVisible: () => collFootGroup.visible,
-  collFootStats: () =>
-    collFootGroup.children.map((c) => ({
-      kind: c.isLineSegments ? "lines" : c.isPoints ? "points" : "other",
-      count: c.geometry.attributes.position.count,
-    })),
   meshFacesVisible: () => meshFacesGroup.visible,
   pickAt: (x, y) => {
     const rect = renderer.domElement.getBoundingClientRect();

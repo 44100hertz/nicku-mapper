@@ -22,3 +22,10 @@ from `<extract>/tools/dol.py`. See the top-level
 Note: `tools/dol.py` on the extract tree notes that the DOL header's data
 section fields are garbage; the real text sections are 0, 1, 7, 8, 9, 10
 with a fixed file→RAM mapping (embedded in `dol.py` and `doldis.py`).
+
+## Remote debugging (live Dolphin)
+
+`gdbstub/` — raw-protocol client + dispatcher scanner for the Dolphin GDB
+stub, plus `gdbstub/README.md` with all the hard-won knowledge (the
+`DebugModeEnabled` requirement, the one-connection lifecycle, the
+savestate-kills-timing-event bug). Read it before using.
