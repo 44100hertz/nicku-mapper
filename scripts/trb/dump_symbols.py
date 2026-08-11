@@ -41,8 +41,10 @@ def main():
     while eof > 0 and d[eof - 1] == 0:
         eof -= 1
     # Search blob_start over a window; validate via entry hashes.
+    # Window: from the end of the chunk data to EOF (small TRBs are shorter
+    # than the 0x34000 the earlier build assumed, which made the window empty).
     best = None  # (score, blob_start, count, base, mode)
-    for blob_start in range(0x34000, eof):
+    for blob_start in range(min(0x34000, max(0x10000, acc)), eof):
         for count in range(1, 400):
             base = blob_start - 4 - 12 * count
             if base < 0 or u32(d, base) != count:
@@ -83,7 +85,15 @@ def main():
         for i in range(count):
             hdrx, nm, doff = sym(i)
             if nm == want:
-                print(f"\n{want}: chunk={hdrx} chunk_base=0x{bases[hdrx]:x} data_offset=0x{doff:x} -> file 0x{bases[hdrx]+doff:x}")
+                addr = bases[hdrx] + doff
+                print(f"\n{want}: chunk={hdrx} chunk_base=0x{bases[hdrx]:x} data_offset=0x{doff:x} -> file 0x{addr:x}")
+                # Raw bytes: dump to EOF of the chunk or next symbol, cap at 0x400.
+                end = min(addr + 0x400, len(d))
+                for off in range(0, end - addr, 16):
+                    row = d[addr + off:addr + off + 16]
+                    hexp = " ".join(f"{b:02x}" for b in row)
+                    asci = "".join(chr(b) if 32 <= b < 127 else "." for b in row)
+                    print(f"  {addr+off:06x}  {hexp:<47}  {asci}")
                 return
         print("not found:", want)
     else:

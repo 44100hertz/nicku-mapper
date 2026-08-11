@@ -22,7 +22,7 @@ HOST = "127.0.0.1"
 PORT = 2159
 BP_DISPATCH = 0x800217BC
 MAX_STOPS = 80
-STOP_TIMEOUT = 1800
+STOP_TIMEOUT = 240
 DUMP_DIR = "/tmp/trb_dumps"
 LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scan3.log")
 SOCK = "/tmp/scan3.sock"
@@ -387,8 +387,11 @@ class Driver:
             while True:
                 time.sleep(3600)
 
-        hold = False
+        hold = True
         running = False
+        log("HOLDING after connect — game paused; awaiting 'go' to resume ("
+            f"pc=0x{self.stub.read_reg(64):08X} lr=0x{self.stub.read_reg(67):08X} "
+            f"r1=0x{self.stub.read_reg(1):08X} r3=0x{self.stub.read_reg(3):08X})")
         while True:
             # serve command channel
             for cmdline in self.cmd.poll():
