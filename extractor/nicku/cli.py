@@ -136,8 +136,9 @@ def main(argv=None):
         build_info["wit"] = wit_ver
         tmp = tempfile.mkdtemp(prefix="nicku-extract-")
         log(f"extracting ISO with wit ({wit_ver})...")
-        run_wit(iso, tmp, wit_bin)
-        data_root = os.path.join(tmp, "P-GNOE", "files", "Data")
+        dest = os.path.join(tmp, "extract")  # must NOT exist (wit creates it)
+        run_wit(iso, dest, wit_bin)
+        data_root = os.path.join(dest, "P-GNOE", "files", "Data")
     else:
         data_root = find_data_root(os.path.abspath(data))
         if data_root is None:

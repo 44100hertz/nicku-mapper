@@ -18,7 +18,7 @@
         version = "0.1.0";
         format = "pyproject";
         src = ./extractor;
-        nativeBuildInputs = [ pkgs.makeWrapper ];
+        nativeBuildInputs = [ pkgs.python3.pkgs.setuptools pkgs.makeWrapper ];
         # WIT (wiimms-iso-tools) is invoked at runtime to extract the ISO.
         postFixup = ''
           wrapProgram $out/bin/nicku-extract \
