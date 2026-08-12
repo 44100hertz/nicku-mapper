@@ -1,0 +1,58 @@
+{
+  "counts": {
+    "collision_levels": 15,
+    "entity_levels": 15,
+    "mesh_levels": 9
+  },
+  "generator": "nicku-extract",
+  "iso": "/run/media/samp/787be337-88e4-4b95-92f9-45d37615cd02/games/console (other)/gcn+wii/nicktoonsunite.iso",
+  "iso_sha256": "8162ea243868132684b23e9111233f23ad2527e50037332d12b955ce4bea6e98",
+  "levels": {
+    "collision": {
+      "JimmyNeutronLab": "nta collision resource",
+      "JimmyNeutronLevel1_01": "nta collision resource",
+      "JimmyNeutronLevel4": "nta main-resource world (nested TSFB)",
+      "SpongeBobLevel1": "nta collision resource",
+      "SpongeBobLevel2": "nta collision resource",
+      "SpongeBobLevel3": "nta collision resource",
+      "SpongeBobLevel4": "nta main-resource world (nested TSFB)",
+      "TestWorld": "nta main-resource world (nested TSFB)",
+      "TimmyTurnerLevel1": "nta collision resource",
+      "TimmyTurnerLevel2": "nta collision resource",
+      "TimmyTurnerLevel4": "nta main-resource world (nested TSFB)",
+      "dannyphantomlevel1": "nta collision resource",
+      "dannyphantomlevel2": "nta main-resource world (nested TSFB)",
+      "dannyphantomlevel3": "nta collision resource",
+      "dannyphantomlevel4": "nta main-resource world (nested TSFB)"
+    },
+    "entities": [
+      "JimmyNeutronLab",
+      "JimmyNeutronLevel1_01",
+      "JimmyNeutronLevel4",
+      "SpongeBobLevel1",
+      "SpongeBobLevel2",
+      "SpongeBobLevel3",
+      "SpongeBobLevel4",
+      "TestWorld",
+      "TimmyTurnerLevel1",
+      "TimmyTurnerLevel2",
+      "TimmyTurnerLevel4",
+      "dannyphantomlevel1",
+      "dannyphantomlevel2",
+      "dannyphantomlevel3",
+      "dannyphantomlevel4"
+    ],
+    "mesh": [
+      "JimmyNeutronLevel1_01",
+      "SpongeBobLevel1",
+      "SpongeBobLevel2",
+      "SpongeBobLevel3",
+      "TimmyTurnerLevel1",
+      "TimmyTurnerLevel2",
+      "dannyphantomlevel1",
+      "dannyphantomlevel2",
+      "dannyphantomlevel3"
+    ]
+  },
+  "wit": "wit: Wiimms ISO Tool v3.05a r0 x86_64 - Dirk Clemens - 2026-07-28"
+}
