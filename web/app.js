@@ -218,15 +218,17 @@ const DEFAULT_HIDDEN_TYPES = new Set(["AMusicTrigger", "AWorldSectionVolume"]);
 const unitEdgeVerts = new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1))
   .attributes.position.array;
 
-// World-space Y for a box center (Position.y is the center of the box).
-const boxY = (e) => WY(e.y);
+// Engine AABB convention (vmtext combined ELF: GetAABBCenter FUN_7f0847a8,
+// GetAABBHalfExtents FUN_7f084640 — every AABB-carrying class incl. ADeathZone
+// uses these): AABBDimensions are HALF-extents and Position.y is the TOP of
+// the volume, so the runtime box spans (x±w, y−2h..y, z±d) in game coords.
+// In viewer space (x, −y, −z) that is centered at (x, −y+h, −z) with
+// half-extents (w, h, d) — i.e. scale (2w, 2h, 2d) on the unit cube.
+const boxCenter = (e) => new THREE.Vector3(e.x, WY(e.y) + e.h, WZ(e.z));
+const boxSize = (e) => new THREE.Vector3(e.w * 2, e.h * 2, e.d * 2);
 
 const boxMatrix = (e) =>
-  new THREE.Matrix4().compose(
-    new THREE.Vector3(e.x, boxY(e), WZ(e.z)),
-    quatFor(e),
-    new THREE.Vector3(e.w, e.h, e.d)
-  );
+  new THREE.Matrix4().compose(boxCenter(e), quatFor(e), boxSize(e));
 
 // ---------------------------------------------------------------------------
 // Scene building
@@ -281,13 +283,14 @@ function computeBounds(entities) {
   let min = new THREE.Vector3(Infinity, Infinity, Infinity);
   let max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
   for (const e of entities) {
-    const ex = e.w ? e.w / 2 : 0;
-    const ey = e.h ? e.h / 2 : 0;
-    const ez = e.d ? e.d / 2 : 0;
-    const yw = WY(e.y);
-    const zw = WZ(e.z);
-    min.min(new THREE.Vector3(e.x - ex, yw - ey, zw - ez));
-    max.max(new THREE.Vector3(e.x + ex, yw + ey, zw + ez));
+    // Box entities: AABBDimensions are half-extents, Position.y is the top.
+    const ex = e.w || 0;
+    const ey = e.h || 0;
+    const ez = e.d || 0;
+    const cy = WY(e.y) + ey; // box center y in viewer space (top-anchored)
+    const cz = WZ(e.z);
+    min.min(new THREE.Vector3(e.x - ex, cy - ey, cz - ez));
+    max.max(new THREE.Vector3(e.x + ex, cy + ey, cz + ez));
   }
   if (min.x === Infinity) {
     min.set(-10, -10, -10);
@@ -1087,8 +1090,8 @@ function selectEntity(entity) {
   }
   const style = getStyle(entity.type);
   if (entity.w && entity.h && entity.d) {
-    selBox.scale.set(entity.w, entity.h, entity.d);
-    selBox.position.set(entity.x, WY(entity.y), WZ(entity.z));
+    selBox.scale.set(entity.w * 2, entity.h * 2, entity.d * 2);
+    selBox.position.set(entity.x, WY(entity.y) + entity.h, WZ(entity.z));
     selBox.quaternion.copy(quatFor(entity));
     selBox.visible = true;
     selRing.visible = false;
@@ -1104,12 +1107,13 @@ function selectEntity(entity) {
 }
 
 function focusOn(entity) {
+  const h = entity.h || 0;
   const r =
     entity.w && entity.h && entity.d
-      ? Math.max(entity.w, entity.h, entity.d) * 1.8
+      ? Math.max(entity.w, entity.h, entity.d) * 2 * 1.8
       : pointRadius(getStyle(entity.type)) * 8;
-  camera.position.set(entity.x + r, WY(entity.y) + r * 0.7, WZ(entity.z) + r);
-  controls.target.set(entity.x, WY(entity.y), WZ(entity.z));
+  camera.position.set(entity.x + r, WY(entity.y) + h + r * 0.7, WZ(entity.z) + r);
+  controls.target.set(entity.x, WY(entity.y) + h, WZ(entity.z));
   controls.update();
 }
 
@@ -1136,7 +1140,7 @@ function fillInfo(e) {
     ["type", e.type],
     ["position", fmtVec(e.x, e.y, e.z)],
     ["orientation", e.orientation ? fmtQuat(e.orientation) : "—"],
-    ["aabb", e.w ? `${e.w.toFixed(3)} × ${e.h.toFixed(3)} × ${e.d.toFixed(3)}` : "—"],
+    ["aabb (half)", e.w ? `${e.w.toFixed(3)} × ${e.h.toFixed(3)} × ${e.d.toFixed(3)}` : "—"],
     ["target", fmtList(e.target)],
     ["parent", e.parent || "—"],
     ["next_waypoint", e.next_waypoint || "—"],
@@ -1288,6 +1292,14 @@ window.__nickmapper = {
     if (!hits.length) return null;
     const list = hits[0].object.userData.entities;
     return list ? { type: list[hits[0].instanceId].type, name: list[hits[0].instanceId].name } : null;
+  },
+  boxAt: (i) => {
+    // Rendered AABB volume for a box entity (engine convention: half-extents,
+    // top at Position.y). Mirrors boxCenter/boxSize for test assertions.
+    const e = state.entities[i];
+    if (!e || !(e.w && e.h && e.d)) return null;
+    const c = boxCenter(e);
+    return { type: e.type, name: e.name, center: c.toArray(), size: boxSize(e).toArray(), raw: [e.x, e.y, e.z, e.w, e.h, e.d] };
   },
   cameraQuat: () => camera.quaternion.toArray(),
   cameraTopDown: () => {

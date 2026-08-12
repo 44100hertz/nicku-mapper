@@ -213,6 +213,31 @@ console.log("edge defaults:", JSON.stringify(wf));
 if (wf.normalEdges !== true || wf.volumeEdges !== false) throw new Error("edge defaults wrong (volume should be hidden)");
 if (!wf.pickable) throw new Error("boxes not pickable in outline mode");
 
+// Box volumes use the engine AABB convention (AABBDimensions = half-extents,
+// Position.y = top of the box): rendered center = (x, -y+h, -z), size = 2×dims.
+const boxConv = await evaluate(`(() => {
+  const N = window.__nickmapper;
+  for (let i = 0; i < N.entities(); i++) {
+    const b = N.boxAt(i);
+    if (!b) continue;
+    const [x, y, z, w, h, d] = b.raw;
+    return {
+      center: b.center.map((v) => v.toFixed(3)),
+      size: b.size.map((v) => v.toFixed(3)),
+      expCenter: [x, -y + h, -z].map((v) => v.toFixed(3)),
+      expSize: [w * 2, h * 2, d * 2].map((v) => v.toFixed(3)),
+    };
+  }
+  return null;
+})()`);
+console.log("box convention:", JSON.stringify(boxConv));
+if (
+  !boxConv ||
+  JSON.stringify(boxConv.center) !== JSON.stringify(boxConv.expCenter) ||
+  JSON.stringify(boxConv.size) !== JSON.stringify(boxConv.expSize)
+)
+  throw new Error("box volume does not match engine AABB convention: " + JSON.stringify(boxConv));
+
 // Labels: only ADanny and APropTriggerEndLevel, unconditionally
 const labelTypes = await evaluate(`window.__nickmapper.labelTypes()`);
 console.log("label types:", JSON.stringify(labelTypes));

@@ -28,6 +28,12 @@ show only for ADanny and APropTriggerEndLevel, unconditionally.
 AMusicTrigger and AWorldSectionVolume start hidden (legend unchecked).
 Game coordinates are +y down and mirrored along z, so the viewer renders
 (x, -y, -z) to match the in-game layout.
+Entity AABB boxes follow the engine's convention (verified in the combined
+vmtext ELF, FUN_7f0847a8/FUN_7f084640): AABBDimensions are HALF-extents and
+Position.y is the TOP of the volume, so the drawn box spans (x±w, y−2h..y,
+z±d) in game coordinates — 2× the raw dimensions, hanging below Position.y.
+This is what makes ADeathZone boxes line up with the actual in-game kill
+areas (the kill test is AABB-vs-AABB with the player's collision body).
 Deep-link to a level with a hash: /web/#SpongeBobLevel2
 
 ** Collision / mesh geometry
