@@ -2,8 +2,7 @@
 # Build the static site from the ISO and push it to the gh-pages branch.
 #
 # The main branch never contains generated game data; the gh-pages branch
-# holds the built site (viewer + collision/entities JSON). Regenerating is a
-# one-liner:
+# holds the built site (viewer + collision/entities JSON). Regenerate with:
 #
 #   NICK_ISO=/path/nicktoonsunite.iso scripts/deploy-gh-pages.sh
 #
@@ -21,35 +20,33 @@ fi
 
 BRANCH="${PAGES_BRANCH:-gh-pages}"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP" "$ROOT/.gh-pages-worktree"' EXIT
+WT="$(mktemp -d)"
+rmdir "$WT"  # worktree add needs a non-existent path
+cleanup() { cd "$ROOT"; rm -rf "$TMP"; git worktree remove --force "$WT" 2>/dev/null || rm -rf "$WT"; }
+trap cleanup EXIT
 
 echo "== extracting ISO -> site =="
 nix run .#extract -- --iso "$ISO" --out "$TMP"
 
 echo "== overlaying viewer =="
-# extractor writes collision/ + entities/ + build-info.json; overlay the viewer
-# source on top so the result is a self-contained static site.
 cp -r viewer/. "$TMP"/
 
-# gh-pages worktree (create the branch if it doesn't exist yet)
+echo "== publishing to $BRANCH =="
 git fetch origin --quiet || true
 if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
-  git worktree add -f .gh-pages-worktree "origin/$BRANCH"
-  (cd .gh-pages-worktree && git checkout -B "$BRANCH" --track "origin/$BRANCH")
+  git worktree add -f "$WT" "origin/$BRANCH" -B "$BRANCH"
 else
-  git worktree add -f .gh-pages-worktree -b "$BRANCH"
+  git worktree add -f --orphan "$WT" -B "$BRANCH"
 fi
 
-echo "== syncing into gh-pages =="
-(cd .gh-pages-worktree && git rm -rf --ignore-unmatch . >/dev/null 2>&1 || true)
-rsync -a --delete --exclude=.git "$TMP"/ .gh-pages-worktree/
-
-cd .gh-pages-worktree
+(cd "$WT" && git rm -rf --quiet . 2>/dev/null || true)
+rsync -a --delete --exclude=.git "$TMP"/ "$WT"/
+cd "$WT"
 git add -A
 if git diff --cached --quiet; then
   echo "no changes to deploy"
 else
-  git commit -m "deploy: $(date -u +%Y-%m-%dT%H:%M:%SZ) (iso $(basename "$ISO"))"
+  git commit -m "deploy: $(date -u +%Y-%m-%dT%H:%M:%SZ) ($(basename "$ISO"))"
   git push origin "$BRANCH"
   echo "deployed to $BRANCH"
 fi
