@@ -1,6 +1,6 @@
 # Collision — status (2025-08, RESOLVED)
 
-> Live-debugging tooling + protocol knowledge: `scripts/dol/gdbstub/README.md`.
+> Live-debugging tooling + protocol knowledge: `re/dol/gdbstub/README.md`.
 > Read its ⚠️ OPERATIONAL DOCTRINE before touching the stub: the connection
 > is ONE-SHOT — no port probing, one persistent driver process, all probes
 > through its command channel.
@@ -9,8 +9,8 @@
 
 The core questions are ANSWERED (this is the state after the 2025-08 live-RE
 session on grilled-dolphin + the combined vmtext+DOL ELF). Detailed writeup:
-`asset-extract/docs/collision-runtime.md`; TRB format details:
-`asset-extract/docs/trb-format-notes.md`.
+`docs/collision-runtime.md`; TRB format details:
+`docs/trb-format-notes.md`.
 
 1. **The "collision mesh" mining was a misalignment, not a different
    format.** `extract_collision.py` read the same 52-byte W0C0M display-mesh
@@ -76,7 +76,7 @@ raw "coll" byte arrays survive in the web JSONs (`collFormat: "unknown"`).
 
 ## 2025-xx: Route A→B pipeline + new strip decode (trb2ram.py)
 
-`scripts/trb/trb2ram.py` = the Route A decoder (TRB → RAM model → viewer JSON,
+`re/trb/trb2ram.py` = the Route A decoder (TRB → RAM model → viewer JSON,
 route B = `--json`). Verified byte-exact against `/tmp/rt_pool.bin` +
 `/tmp/rt_idx.bin` (the s02 RAM dump ground truth).
 
@@ -180,7 +180,7 @@ pointers are relative, the RAM's = resolved absolute).
 
 ## 2025-xx: RELEASE DECODER — 1:1 from the game data (no hardcoded geometry)
 
-`scripts/trb/nta2json.py` parses `AssetsAuto.nta` and emits the viewer JSON
+`extractor/nicku/collision.py` parses `AssetsAuto.nta` and emits the viewer JSON
 with **ZERO hardcoded collision geometry**:
 
 - Resource header @ 0x21aac0: {poolcnt=11379, data_len=140136, idxcnt=17973,
@@ -253,7 +253,7 @@ z[-3.87,18]) + 21768 u16 idx (7256 tris, max idx 13081) + 3 layers
 6929/36/291 (counts*3 == nidx). Viewer-verified (vision): the cyan
 overlay aligns with the level mesh in DP2/DP4/TestWorld.
 
-**Release decoder**: `scripts/trb/ntaworld2json.py` (--all regenerates
+**Release decoder**: `extractor/nicku/collision.py` (--all regenerates
 the 6 JSONs). LOAD_VERSION 22. Coverage now 15/15; the "boss" level-4s +
 TestWorld are NOT collisionless — they were just Format B. Remaining
 hardcoded = only the layer flags (see still_hardcoded.md).

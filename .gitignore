@@ -1,6 +1,21 @@
+# Build outputs / generated data (never committed; regenerated from the ISO)
 out/
 output/
-.pi-subagents/
+site/
+dist/
+viewer/collision/
+viewer/entities/
+viewer/build-info.json
+
+# RE artifacts
+vmtext_combined.elf
 *.pid
-scripts/dol/gdbstub/scan3.log
-scripts/dol/gdbstub/scan3.out
+*.bundle
+re/dol/gdbstub/scan3.log
+re/dol/gdbstub/scan3.out
+
+# Tooling / editor cruft
+__pycache__/
+*.pyc
+.pi-subagents/
+node_modules/

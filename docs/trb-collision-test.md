@@ -15,7 +15,7 @@
 
 > ⚠️ SUPERSEDED (2025-08 live session): the container-vs-Barnyard
 > comparison below stands, but the collision question is RESOLVED — see
-> `asset-extract/docs/collision-runtime.md` §"HOW THE COLLISION IS ACTUALLY
+> `docs/collision-runtime.md` §"HOW THE COLLISION IS ACTUALLY
 > DETERMINED" and trb-format-notes §4f. NTU has no per-mesh collision
 > format: the collision = the level's collision model (named "Collision_*"
 > AABB volume objects from the Database instance records + the compiled
@@ -35,7 +35,7 @@
 3. **SYMB**: `{u16 hdrx, u16 nameOff, u16 pad, i16 nameHash, u32 dataOff}`
    with names after `4 + 12*count`. All **92/92** symbols validated against
    Barnyard's `HashString` (`hash*0x1f + char`, 16-bit) — the exact same
-   layout. (`scripts/trb/dump_symbols.py`)
+   layout. (`re/trb/dump_symbols.py`)
 4. **Symbol set**: `Header`, `Database`, `SkeletonHeader`, `Skeleton`,
    `Materials`, `Collision` + 86 `W0C0M0..85` mesh symbols — the same
    symbol names `TModel::LoadTRB` / `TModel::GetSymbol` uses in Barnyard.
@@ -105,9 +105,9 @@ Opcode, but the TRB-side reader was not located this session.
 
 ## Tooling added
 
-- `scripts/trb/dump_symbols.py` — TTRB symbol table dump/validate (hash
+- `re/trb/dump_symbols.py` — TTRB symbol table dump/validate (hash
   checked, resolves `Collision` etc. to chunk+offset).
-- `scripts/trb/decode_collision.py` — RELC-aware decode of the Collision
+- `re/trb/decode_collision.py` — RELC-aware decode of the Collision
   symbol + mesh pointer slots.
 - Note: the u8-triple C-block verifier (`verify_cblocks.py`) and the other
   byte-interpretation tools were removed in the blank-slate cleanup — only

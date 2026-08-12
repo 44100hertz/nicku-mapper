@@ -1,0 +1,1 @@
+`chunk(k+1) - B ≈ 0x20` for nearly all meshes — **B = index-data byte size in the chunk**. sumF = 29,117 triangles. Now the decisive test — max u8-triple values per block (local vs global index space) and triangle degeneracy:
