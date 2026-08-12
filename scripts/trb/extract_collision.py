@@ -1,6 +1,21 @@
 #!/usr/bin/env python3
 """Extract collision meshes from a Nicktoons Unite TRB file.
 
+⚠️⚠️⚠️  RETRACTED READING — see asset-extract/docs/collision-runtime.md  ⚠️⚠️⚠️
+This script scans records with flag==0x06020202 at +0x10 and center at
++0x14, but the REAL record layout (verified against file bytes and the
+runtime model) is: center@+0x00, flag@+0x30, C-block@+0x20/+0x24,
+count@+0x2c. Reading at +0x10/+0x14 means the scan lands 0x20 bytes INTO
+the 52-byte records: the "flag" is the real flag, but the "center" and
+pools/strips come from the NEXT record. The mined "collision meshes" are
+therefore the SAME W0C0M display records (mesh k's output = visual mesh
+k+1's data), not a separate collision format. The runtime collision model
+(pool + u16 triangle table + quantized AABB tree + per-group layer flags)
+is built from these same display records by vmtext code; the DOL's OpCODE
+library is dead code (strings only).
+
+Original (incorrect) claim below, kept for history:
+
 Format decoded from the game's own byte-consumer (decomp of the TTRB chunk
 loader FUN_7f297178 + the RELC relocator, verified LIVE against the emulator
 via breakpoints on the parser and the relocation store):
@@ -251,18 +266,34 @@ def main():
         if cerr > 0.05:
             print(f"  rec@{m['rec']:#x}: REJECT (center mismatch {cerr:.3f})"); reject += 1
             continue
-        # index range check: all three corner indices must be in the pool
-        maxidx = max(d[cand + 3 + 3 * i + k] for i in range(n) for k in range(3))
+        # strip form: u8 triples (posIdx, nrmIdx, texIdx) x3 for pools < 256
+        # verts, or u16 pairs (posIdx, nrmIdx) x4 for pools >= 256 (the posIdx
+        # is u16 then). Verified against the runtime alloc sizes (+0x28 =
+        # 3 + n*stride rounded to 0x20): all 101 records, 0 conflicts.
+        u16form = len(pool) >= 256
+        # index range check: the strip's posIdx column indexes the pos pool
+        if u16form:
+            maxidx = max(struct.unpack_from(">H", d, cand + 3 + 4 * i)[0]
+                         for i in range(n))
+        else:
+            maxidx = max(d[cand + 3 + 3 * i] for i in range(n))
         if maxidx >= len(pool):
             print(f"  rec@{m['rec']:#x}: REJECT (posIdx {maxidx} >= pool {len(pool)})"); reject += 1
             continue
-        # faces: the strip is a TRIANGLE LIST — each 3-byte triple is one
-        # triangle's (v0, v1, v2) corner indices (runtime-confirmed: the query
-        # FUN_7f259760 reads strip[tri*6..+5] as three u16s into the pos pool).
-        faces = [d[cand + 3 + 3 * i + k] for i in range(n) for k in range(3)]
+        # faces: the posIdx column. Triangles are CONSECUTIVE triples (a real
+        # strip, degenerate restarts); runtime-confirmed: the query's converted
+        # table reads 3 u16s per triangle, and the memdump faces == posIdx
+        # column (PrisColwall: 3,2,4,4,17,17,16,15,13,13,...).
+        if u16form:
+            faces = [struct.unpack_from(">H", d, cand + 3 + 4 * i)[0]
+                     for i in range(n)]
+        else:
+            faces = [d[cand + 3 + 3 * i] for i in range(n)]
         verts = []
         for x, y, z in pool:
-            verts += [x, z, y]  # viewer convention (x, z, y)
+            verts += [x, y, z]  # viewer convention: (x, y, z) raw s16s — the
+            # viewer maps pos=(v0, v2, -v1)/div so s16 z = world-up, s16 y =
+            # world-depth. (MEM-COLL ground truth stores exactly (x, y, z).)
         parts.append({"file": f"COLL {m['rec']:#x}", "meshCount": 1, "meshes": [{
             "k": len(parts), "name": f"COLL-{len(parts)}", "flag": hex(FLAG),
             "center": [m['ctr'][0], m['ctr'][1], m['ctr'][2]], "radius": m['ctr'][3],

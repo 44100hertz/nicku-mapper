@@ -27,8 +27,16 @@ elsewhere. The repo's `asset-extract` symlink points at the same tree
 (`asset-extract/tools/trb_mesh.py` is the canonical mesh exporter; these
 scripts were the analysis that informed it).
 
-DOL probes also need `capstone` (pip) and the `dol` module that lives in
-`<extract>/tools/dol.py` (added to `sys.path` automatically).
+**The ISO** (`nicktoonsunite.iso`, P-GNOE) is a sibling of the extract dir
+under `games/console (other)/gcn+wii/` — the drive must be mounted; the mount
+point embeds the mounting user's name, so resolve it via `NICK_EXTRACT` or
+`findmnt` rather than hardcoding. DOL probes also need `capstone` (pip) and
+the `dol` module that lives in `<extract>/tools/dol.py` (added to `sys.path`
+automatically).
+
+**What to decompile**: `vmtext_combined.elf` (DOL + engine image) — build it
+with `dol/build_combined_elf.py` (see `dol/README.md` for the Ghidra cache
+and the known segment-2 analysis gap).
 
 ## Per-directory details
 

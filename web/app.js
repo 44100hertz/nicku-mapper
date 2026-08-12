@@ -32,7 +32,8 @@ const tog = {
   cull: $("tog-cull"),
   grid: $("tog-grid"),
   additive: $("tog-additive"),
-  memcoll: $("tog-memcoll"),
+  collmesh: $("tog-collmesh"),
+  collsolid: $("tog-collsolid"),
 };
 
 // ---------------------------------------------------------------------------
@@ -41,7 +42,8 @@ const tog = {
 // All faces share one base style: the color is tinted a bit by world height
 // (cool below, warm above), then Gouraud-lit by the scene lights so each
 // face reads with angle-based shading. The only knob is translucent vs
-// solid: translucent uses ADDITIVE blending at 50% opacity, which sidesteps
+// solid: translucent uses ADDITIVE blending at 25% opacity (half-bright,
+// so the X-ray glow doesn't wash out details beneath), which sidesteps
 // the classic transparent-sorting artifacts (overlaps get brighter instead
 // of z-fighting); solid is a normal opaque surface.
 const meshStyle = {
@@ -51,8 +53,9 @@ const meshStyle = {
   baseLight: new THREE.Color(0xe8ecf4), // material color (vertex colors modulate)
 };
 
-// Additive blend factor (opacity of the translucent shell).
-const MESH_ADDITIVE_OPACITY = 0.5;
+// Additive blend factor (opacity of the translucent X-ray shell). Kept at
+// half-bright so the overlap glow doesn't wash out the details beneath it.
+const MESH_ADDITIVE_OPACITY = 0.25;
 
 // ---------------------------------------------------------------------------
 // Three.js scene
@@ -253,10 +256,10 @@ function clearView() {
   // the traverse above.
   collisionGroup.add(meshFacesGroup);
   meshFacesGroup.clear();
-  memCollGroup.traverse(dispose);
-  memCollGroup.clear();
   collLineGroup.traverse(dispose);
   collLineGroup.clear();
+  collSolidGroup.traverse(dispose);
+  collSolidGroup.clear();
   selGroup.visible = false;
   state.entities = [];
   state.byName.clear();
@@ -636,30 +639,25 @@ $("btn-hide-all").addEventListener("click", () => {
 // down), so floors stay visible from above. Default ON (checkbox
 // tog-cull is checked); applyToggles syncs this from the checkbox.
 let cullBackfaces = true;
-let loadMeshV2Div = null;
 // Bump when regenerating collision JSONs to force re-download.
-const LOAD_VERSION = 11;
+const LOAD_VERSION = 20;
 
 const meshFacesGroup = new THREE.Group();
 collisionGroup.add(meshFacesGroup);
 
-// RAM-dump ground-truth collision (MEM-COLL) renders separately + brighter
-// so it can be verified against the visual meshes and toggled on its own.
-const memCollGroup = new THREE.Group();
-// Scene root child (NOT collisionGroup): the RAM-dump ground-truth coll must
-// be toggled exclusively by tog-memcoll — independent of "Mesh geometry",
-// the faces toggle, and hide-all/show-all (all of which act on collisionGroup
-// or entity types).
-scene.add(memCollGroup);
-const MEM_COLL_COLOR = 0xff44ff;
-
-// Extracted TRB collision (COLL-LINE) renders as points + strip-edge lines
-// (the past debug pattern), in its own scene-root group so it never touches
-// the visual meshes. Toggled by tog-collision like the rest of the collision
-// overlay.
+// The runtime-dump collision mesh (COLL-LINE) renders as points + triangle
+// edges in its own scene-root group so it never touches the visual meshes
+// (the past debug pattern). Toggled independently by tog-collmesh.
 const collLineGroup = new THREE.Group();
 scene.add(collLineGroup);
 const COLL_LINE_COLOR = 0x33ffcc;
+
+// Optional solid collision (COLL-SOLID): the same runtime triangles as red
+// Lambert surfaces, Gouraud-lit/shaded like the level mesh. Toggled
+// independently by tog-collsolid (default off; the cyan lines stay default).
+const collSolidGroup = new THREE.Group();
+scene.add(collSolidGroup);
+const COLL_SOLID_COLOR = 0xff3333;
 
 // Collision classification: GROUND TRUTH from the emulator (s02 savestate,
 // DPWorld_Level01_01): the per-mesh coll is a GX-style indexed triangle
@@ -704,6 +702,13 @@ async function loadCollLines(dir) {
   const data = await res.json();
   if (data.format !== "mesh-v2") return null;
   const div = data.div || 64;
+  // facesMode: "triples" (runtime-dump JSONs) = faces are the COMPILED
+  // consecutive triangle list (every 3 indices = one real triangle, no
+  // strip restarts). The default (mined strips) = a GX-style indexed
+  // strip: sliding window with degenerate restarts. The runtime dumps
+  // MUST use triples — the strip window would emit phantom "bridge"
+  // triangles between the real ones (both correct AND spurious faces).
+  const triples = data.facesMode === "triples";
   let meshes = 0;
   let lines = 0;
   for (const part of data.parts || []) {
@@ -736,14 +741,18 @@ async function loadCollLines(dir) {
       const L = faces.length;
       const edges = new Set();
       const edgeVerts = [];
-      // faces = triangle LIST: every 3 indices are one triangle's corners
-      // (the TRB strip stores (v0,v1,v2) triples, not a vertex strip).
-      for (let i = 0; i + 2 < L; i += 3) {
+      // faces = the strip's posIdx column; triangles are CONSECUTIVE triples
+      // (a real triangle strip: repeated posIdx = degenerate restart, renders
+      // as nothing; winding alternates per triangle).
+      const step = triples ? 3 : 1;
+      const solidIdx = [];
+      for (let i = 0; i < L - 2; i += step) {
         const a = faces[i];
         const b = faces[i + 1];
         const c = faces[i + 2];
         if (a === b || b === c || a === c) continue;
-        const tri = [a, b, c];
+        const tri = triples ? [a, b, c] : i % 2 ? [b, a, c] : [a, b, c];
+        solidIdx.push(tri[0], tri[1], tri[2]);
         for (const [u, w] of [
           [tri[0], tri[1]],
           [tri[1], tri[2]],
@@ -773,6 +782,24 @@ async function loadCollLines(dir) {
         collLineGroup.add(linesObj);
         lines += edgeVerts.length / 6;
       }
+      // Optional solid render (COLL-SOLID): same triangles as red Lambert
+      // surfaces with vertex normals, so the scene lights shade them like
+      // the level mesh. DoubleSide so both sides read regardless of winding.
+      if (solidIdx.length) {
+        const sg = new THREE.BufferGeometry();
+        sg.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+        sg.setIndex(new THREE.Uint32BufferAttribute(solidIdx, 1));
+        sg.computeVertexNormals();
+        const sm = new THREE.Mesh(
+          sg,
+          new THREE.MeshLambertMaterial({
+            color: COLL_SOLID_COLOR,
+            side: THREE.DoubleSide,
+          })
+        );
+        sm.userData = { type: "coll-solid" };
+        collSolidGroup.add(sm);
+      }
       meshes++;
     }
   }
@@ -784,7 +811,6 @@ const _tint = new THREE.Color();
 
 function loadMeshV2(data) {
   const div = data.div || 64;
-  loadMeshV2Div = div;
   const facePos = [];
   const faceIdx = [];
   const matGroups = {};
@@ -812,65 +838,11 @@ function loadMeshV2(data) {
         if (wy > maxY) maxY = wy;
       }
       const faces = m.faces;
-      const isMem = m.name === "MEM-COLL" || (part.file || "").startsWith("MEMDUMP");
       if (faces && faces.length >= 3) {
         // Indexed strip: faces[i] = the pool position of strip vertex i.
         // Consecutive triples tile the floors/walls; repeated-index
         // (degenerate) triangles are the strip-restart markers and render
         // as nothing. Winding alternates per triangle (strip convention).
-        if (isMem) {
-          // Past debug pattern (loadMeshV1 style): points + connection lines
-          // in the collision overlay — the strip shape reads at any zoom.
-          const ptsGeo = new THREE.BufferGeometry();
-          ptsGeo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-          const pts = new THREE.Points(
-            ptsGeo,
-            new THREE.PointsMaterial({
-              size: 0.25,
-              sizeAttenuation: true,
-              color: MEM_COLL_COLOR,
-              transparent: true,
-              opacity: 0.95,
-            })
-          );
-          pts.userData = { type: "mem-coll" };
-          memCollGroup.add(pts);
-          // Strip-triangle edges as lines (shared edges deduped).
-          const L = faces.length;
-          const edges = new Set();
-          const edgeVerts = [];
-          for (let i = 0; i < L - 2; i++) {
-            const a = faces[i];
-            const b = faces[i + 1];
-            const c = faces[i + 2];
-            if (a === b || b === c || a === c) continue;
-            const tri = i % 2 ? [b, a, c] : [a, b, c];
-            for (const [u, v] of [[tri[0], tri[1]], [tri[1], tri[2]], [tri[2], tri[0]]]) {
-              const k = u < v ? u * 256 + v : v * 256 + u;
-              if (edges.has(k)) continue;
-              edges.add(k);
-              edgeVerts.push(
-                pos[u * 3], pos[u * 3 + 1], pos[u * 3 + 2],
-                pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]
-              );
-            }
-          }
-          if (edgeVerts.length) {
-            const lgeo = new THREE.BufferGeometry();
-            lgeo.setAttribute("position", new THREE.Float32BufferAttribute(edgeVerts, 3));
-            const lines = new THREE.LineSegments(
-              lgeo,
-              new THREE.LineBasicMaterial({
-                color: MEM_COLL_COLOR,
-                transparent: true,
-                opacity: 0.9,
-              })
-            );
-            lines.userData = { type: "mem-coll" };
-            memCollGroup.add(lines);
-          }
-          continue;
-        }
         const fbase = facePos.length / 3;
         for (let i = 0; i < n; i++) {
           facePos.push(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
@@ -970,9 +942,9 @@ function applyToggles() {
   const showGrid = tog.grid.checked;
 
   collisionGroup.visible = showCollision;
-  collLineGroup.visible = showCollision;
+  collLineGroup.visible = !!(tog.collmesh && tog.collmesh.checked);
+  collSolidGroup.visible = !!(tog.collsolid && tog.collsolid.checked);
   meshFacesGroup.visible = tog.faces.checked;
-  memCollGroup.visible = !!(tog.memcoll && tog.memcoll.checked);
 
   // Back-face culling: with FrontSide, surfaces whose front faces point
   // away from the camera (ceiling bottoms from above, outer wall faces,
@@ -981,7 +953,7 @@ function applyToggles() {
   // player sees" (floors up, ceilings down), so floors stay visible.
   cullBackfaces = tog.cull.checked;
   const cullSide = cullBackfaces ? THREE.FrontSide : THREE.DoubleSide;
-  // Translucent = additive blend at 50% (order-independent, no z-sorting
+  // Translucent = additive blend at 25% (order-independent, no z-sorting
   // artifacts); solid = opaque, depth-writing. Same Lambert material either
   // way — shading and the Y tint stay on permanently.
   const additiveOn = tog.additive && tog.additive.checked;
@@ -1023,19 +995,20 @@ function buildCollLegend() {
   const list = document.getElementById("coll-legend-list");
   if (!list || list.childElementCount) return;
   list.innerHTML = '<span style="color:var(--dim)">' +
-    'Mesh collision: unverified — needs the DOL reader.<br>' +
-    'Ground truth from the emulator (s02 savestate, DPWorld_Level01_01):<br>' +
-    'the coll mesh = s16-fixed-point vertex pool + a 0x98 index strip<br>' +
-    '(posIdx,nrmIdx,texIdx); repeated-index triangles = strip restarts.<br>' +
-    'MEM-COLL part = the RAM dump rendered directly (verify vs the map).<br>' +
-    'Entity volumes (boxes): verified gameplay boundaries.<br>' +
-    'AWorldSectionVolume, ADeathZone, ABarrier, etc.' +
+    'Collision mesh = the runtime world (s02 savestate, DPWorld_Level01_01)<br>' +
+    'dumped from RAM: compiled vertex pool + index list (the actual triangles<br>' +
+    'the engine casts against). Verts = the s16 fixed-point coords (x, y, z)<br>' +
+    'at 1/64 scale; faces = consecutive triples (no strip restarts).<br>' +
+    'Cyan = the real collision surfaces (floors, walls, slopes). The solid<br>' +
+    'red toggle renders the same triangles shaded (Lambert), default off.<br>' +
+    'Entities may also carry box volumes (AWorldSectionVolume, ADeathZone,<br>' +
+    'ABarrier...).' +
     '</span>';
 }
 buildCollLegend();
 
 // View toggles
-for (const id of ["tog-points", "tog-links", "tog-paths", "tog-collision", "tog-faces", "tog-cull", "tog-grid", "tog-additive", "tog-memcoll"]) {
+for (const id of ["tog-points", "tog-links", "tog-paths", "tog-collision", "tog-collmesh", "tog-collsolid", "tog-faces", "tog-cull", "tog-grid", "tog-additive"]) {
   const el = $(id);
   if (el) el.addEventListener("change", applyToggles);
 }
@@ -1304,32 +1277,8 @@ window.__nickmapper = {
   collisionVisible: () => collisionGroup.visible,
   collisionParented: () => collisionGroup.parent === scene,
   meshFacesVisible: () => meshFacesGroup.visible,
-  memCollVisible: () => memCollGroup.visible,
-  memCollParented: () => !!memCollGroup.parent && memCollGroup.parent === scene,
-  memCollCount: () => memCollGroup.children.length,
-  memCollBounds: () => {
-    const m = memCollGroup.children[0];
-    if (!m || !m.geometry) return null;
-    const b = new THREE.Box3().setFromObject(m);
-    return {
-      min: b.min.toArray(),
-      max: b.max.toArray(),
-      size: b.getSize(new THREE.Vector3()).toArray(),
-      triCount: m.geometry.index ? m.geometry.index.count / 3 : 0,
-      posCount: m.geometry.attributes.position.count,
-      posFirst: Array.from(m.geometry.attributes.position.array.slice(0, 12)),
-      div: loadMeshV2Div,
-      vertsFirst: (() => { const p = m.geometry.attributes.position; return { minX: Math.min(...Array.from(p.array).filter((_,i)=>i%3===0)), maxX: Math.max(...Array.from(p.array).filter((_,i)=>i%3===0)) }; })(),
-
-      posNaN: (() => { const p = m.geometry.attributes.position.array; let n = 0; for (let i = 0; i < p.length; i++) if (Number.isNaN(p[i])) n++; return n; })(),
-    };
-  },
   camPos: () => camera.position.toArray(),
   camTarget: () => controls.target.toArray(),
-  memCollVisibleWithCollisionOff: () => {
-    // The old bug: collisionGroup.visible=false killed the RAM dump too.
-    return !collisionGroup.visible && memCollGroup.visible && memCollGroup.children.length > 0;
-  },
   pickAt: (x, y) => {
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.x = ((x - rect.left) / rect.width) * 2 - 1;

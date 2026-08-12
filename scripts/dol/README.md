@@ -6,6 +6,37 @@ executable. The goal of this investigation was the GX vertex-format setup
 Toshi engine's mesh strip walking, to explain the mesh pools found by
 [`trb/`](../trb/).
 
+## Where's the ISO / what binary do I decompile?
+
+- **ISO**: `nicktoonsunite.iso` (P-GNOE, GCN) lives at
+  `games/console (other)/gcn+wii/` on the removable drive — currently mounted
+  at
+  `/run/media/samp/787be337-88e4-4b95-92f9-45d37615cd02/games/console (other)/gcn+wii/`
+  (the mount point contains the *mounting user's* name, so it can change;
+  `NICK_EXTRACT` overrides everything).
+- **The binary to decompile is the COMBINED ELF**: `vmtext_combined.elf` — the
+  DOL text sections + the engine image `vmtext.bin` (loaded at 0x7f004000)
+  merged into one ELF so Ghidra resolves cross-references both ways. Build it
+  with:
+
+      python3 build_combined_elf.py -o vmtext_combined.elf
+
+  (inputs resolve from `NICK_EXTRACT`; the output is byte-identical to the
+  previously-analyzed ELF, sha256 `ca1d134e...`, so the cached Ghidra project
+  stays valid.)
+- **Ghidra**: import the ELF with PowerPC:BE:32 (Ghidra picks `e500`; fine
+  for Gekko code). The project is cached by sha in the pi-ghidra cache dir
+  (`~/.pi/agent` + `/home/cyan/pi-ghidra-cache/artifacts/<sha>/project/`).
+  Known analysis gap: DOL segment 2 (0x80042480-0x800b6f3f, the game code +
+  dead OpCODE rodata) has NO functions created by auto-analysis; the vmtext
+  segment (0x7f004000+, where the TTRB loader and the collision system live)
+  and DOL segments 0-1 are fully analyzed.
+- **Key anchors** (see `../../asset-extract/docs/collision-runtime.md`):
+  TTRB container loader `FUN_7f297178` / `FUN_7f296f74` (vmtext); collision
+  ray queries `FUN_7f0686d8 → FUN_7f067e60 → FUN_7f0650d0/414` →
+  `FUN_7f2546e8` → `FUN_7f259760`; triangle→mesh map `FUN_7f2a4ee0`. OpCODE
+  in the DOL is dead code (strings only, zero references).
+
 | Script         | Purpose                                                                    |
 |----------------|----------------------------------------------------------------------------|
 | `dol2elf.py`   | Generic DOL → ELF32 big-endian PowerPC converter (sections embedded, BSS included) for loading into Ghidra. `python3 dol2elf.py main.dol out.elf`. |

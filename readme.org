@@ -184,6 +184,19 @@ previously scattered in /tmp):
 They default to the mounted disc-extract root; override with
 NICK_EXTRACT=/path/to/extract. See scripts/README.md.
 
+**RE quickstart (what everyone forgets):**
+
+- ISO: `nicktoonsunite.iso` (P-GNOE, GCN) on the removable drive at
+  `games/console (other)/gcn+wii/` (mount: /run/media/<user>/<uuid>/... — the
+  user name varies; find it with `findmnt` or NICK_EXTRACT).
+- Binary: decompile `vmtext_combined.elf` — the DOL + the engine image
+  vmtext.bin (0x7f004000) merged; rebuild it any time with
+  `scripts/dol/build_combined_elf.py` (byte-identical output, so the cached
+  Ghidra project stays valid). The collision system, TTRB loader and mesh
+  records are all in vmtext; the DOL's OpCODE is dead code.
+- Collision notes: `asset-extract/docs/collision-runtime.md` (live session
+  findings) + `docs/collision-status.md` + `asset-extract/docs/trb-format-notes.md`.
+
 * Future plans?
 spec.org is fully done now — the 3D web viewer covers the "fancy stuff".
 Still open on the geometry side: the texture pipeline (the .ttl files hold

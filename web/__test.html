@@ -1,12 +1,4 @@
 <iframe id="v" src="/web/#dannyphantomlevel1" width="1280" height="900"></iframe>
 <script>
-const wantOff = new URLSearchParams(location.search).get("memcoll") === "0";
-window.addEventListener("load", () => {
-  const w = document.getElementById("v").contentWindow;
-  if (wantOff) {
-    // uncheck BEFORE the level finishes loading; applyToggles reads it later
-    const cb = w.document.getElementById("tog-memcoll");
-    cb.checked = false;
-  }
-});
+// (the old ?memcoll=0 toggle-test was removed with the RAM coll dump feature)
 </script>

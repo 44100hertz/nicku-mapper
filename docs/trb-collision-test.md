@@ -13,12 +13,16 @@
 
 ## Verdict: the *container* is identical to Barnyard; the collision mesh *format* is unknown
 
-The TTRB container, RELC relocations, SYMB name table and symbol set are
-byte-identical to Barnyard (confirmed below). The collision mesh **format**
-was NOT established: the 3-byte u8-triple "quantized vertices" reading
-proposed this session is unlikely to be correct and is retracted — it was a
-block-size structural heuristic, not a decomp- or DOL-confirmed layout.
-The collision mesh format is **unknown** (see `docs/collision-status.md`).
+> ⚠️ SUPERSEDED (2025-08 live session): the container-vs-Barnyard
+> comparison below stands, but the collision question is RESOLVED — see
+> `asset-extract/docs/collision-runtime.md` §"HOW THE COLLISION IS ACTUALLY
+> DETERMINED" and trb-format-notes §4f. NTU has no per-mesh collision
+> format: the collision = the level's collision model (named "Collision_*"
+> AABB volume objects from the Database instance records + the compiled
+> display-mesh surfaces), queried by a vmtext custom AABB-tree ray caster.
+> The Barnyard TModelCollisionData path is NOT used (the `Collision` symbol
+> is an empty stub in every game TRB). The "coll" byte arrays = display-mesh
+> index records.
 
 ### ✅ Confirmed identical to Barnyard (byte-level, validated)
 
