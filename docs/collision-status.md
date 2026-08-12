@@ -223,27 +223,43 @@ byte-exact vs the RAM dump. Layer flags/names for 1-2-layer levels = the first
 N of the hardcoded (0x27/0x26/0x7, default/nopathfind/noocclude) — see
 still_hardcoded.md.
 
-## 2025-xx: whole-game fixes — multi-resource merge + the DP2 format found
+## 2025-xx: DP2 + the boss levels — the second nta format FOUND (15/15 coverage)
 
-**User verification (viewer):** DP1/3, JNL, SB2, TT1, TT2 perfect; JN1, SB1,
-SB3 were HALF complete; DP2 = playable with in-game collision; the level-4s +
-TestWorld = boss fights / no collision.
+The DP2 investigation ended up finding a SECOND collision format inside the
+same AssetsAuto.nta files (superseding the "trb-based tree" hypothesis,
+which was an off-by-one: the last trb section is W0C0M137's mesh chunk,
+verified via its +0x10 RELC relocation to section 138).
 
-**The "half complete" fix:** multi-sub-level ntas hold ONE collision resource
-per sub-level; the decoder took the first. `nta2json.py --all` now merges
-every resource (pool = concatenation, idx = re-indexed concatenation, layer
-counts summed by position):
-- JN1: 7250+4711+5918+361 = 18240 verts
-- SB1: 12512+26316 = 38828; SB3: 6603+8009+6056+3754 = 24422
-Single-resource levels unchanged; DP1 still byte-exact vs the RAM dump.
-All 9 JSONs regenerated (LOAD_VERSION 21).
+**The 6 "no-resource" levels (dannyphantomlevel2/4, JimmyNeutronLevel4,
+SpongeBobLevel4, TimmyTurnerLevel4, TestWorld) put the world in the nta's
+MAIN resource instead of a separate pool/idx resource.** The main resource
+= {nested TSFB (a sub-model) + 0xc0-byte Collision_* volume records +
+the world object table + pool + idx + layer records + layer names}:
 
-**The DP2 format (the playable level with in-game collision):** the active
-level = "DPWorld_Detail_level02_03" (levelnfo) — its .trb = a 139-section
-TSFB: 138 W0C0M display sections + a **"Collision" section** (the last, size
-0x920) whose data = the QUANTIZED AABB-TREE (u16 quantized positions +
-increasing index pairs: 0x6c44, 0x19d, 0x38d0, ...) — the "older" collision
-format the vmtext ray caster (FUN_7f067e60 tree walk) consumes directly
-(no nta pool/idx). The 6 "no-resource" ntas likely all use this trb-based
-tree format (or the entity sections' nested TSFB "Collision" sub-resources).
-Decoding the tree = the next open item (the DP2/4s + the boss levels).
+- Object table (10 u32s): `{1, p0, p1, -1, pool_off, nverts, idx_off,
+  nidx, layercnt, layrecs}` where **pool_off + nverts*12 == idx_off**
+  (f32 pool directly followed by the u16 idx — the SAME layout as the
+  Format-A resource).
+- The object table sits past the TSFB's chunked sections (the nta resource
+  = TSFB + volumes + world streams); the SECT header's +0x34 object-table
+  offset is the authoritative anchor.
+- Layer records (0x18 stride @ SECT+layrecs): {name_ptr, 0, cum_count,
+  tricount, 0, next_name_ptr}; names are the real runtime strings
+  ("default", "collision_nopathfind", "collision_noocclude"; TestWorld
+  adds "collision_char").
+
+Verified: DP2 = 13082 f32 pool verts (bbox x[-69.2,59.7] y[-2.5,168.8]
+z[-3.87,18]) + 21768 u16 idx (7256 tris, max idx 13081) + 3 layers
+6929/36/291 (counts*3 == nidx). Viewer-verified (vision): the cyan
+overlay aligns with the level mesh in DP2/DP4/TestWorld.
+
+**Release decoder**: `scripts/trb/ntaworld2json.py` (--all regenerates
+the 6 JSONs). LOAD_VERSION 22. Coverage now 15/15; the "boss" level-4s +
+TestWorld are NOT collisionless — they were just Format B. Remaining
+hardcoded = only the layer flags (see still_hardcoded.md).
+
+The "trb-based tree" section below (139-section TSFB / 0x920 Collision
+section / 0x6c44 index pairs) is SUPERSEDED: the last trb section is
+W0C0M137's mesh chunk (its +0x10 RELC-relocates to section 138; pool =
+320 s16 verts = the +0x14 field), and every mesh chunk shares the same
+{pool, tree-triplets, hash-tail} layout as the nta world streams.

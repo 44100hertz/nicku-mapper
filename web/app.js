@@ -643,7 +643,7 @@ $("btn-hide-all").addEventListener("click", () => {
 // tog-cull is checked); applyToggles syncs this from the checkbox.
 let cullBackfaces = true;
 // Bump when regenerating collision JSONs to force re-download.
-const LOAD_VERSION = 21;
+const LOAD_VERSION = 22;
 
 const meshFacesGroup = new THREE.Group();
 collisionGroup.add(meshFacesGroup);
