@@ -21,57 +21,81 @@ LAYER_FLAGS = ("0x27", "0x26", "0x7")
 LAYER_NAMES = ("default", "collision_nopathfind", "collision_noocclude")
 
 
-def parse_nta(path):
+def parse_nta(path, all_resources=False):
+    """Parse the nta collision resource(s).
+
+    With all_resources=False (default): the first resource only (kept for the
+    byte-exact DP1 check). With all_resources=True: every resource in the nta
+    is parsed and merged (pool = concatenation, idx = concatenation with
+    re-indexing, layer counts summed by position) — multi-resource ntas hold
+    one resource per sub-level, so the merged result is the WHOLE level.
+    """
     d = open(path, "rb").read()
-    # Locate the collision resource header: {poolcnt, data_len, idxcnt, layercnt}
-    # The pool follows at +0x5c and the idx at pool + poolcnt*12.
-    best = None
-    for off in range(len(d) - 0x60):
+
+    def try_header(off):
         poolcnt, x, idxcnt, layercnt = struct.unpack_from(">4I", d, off)
         if layercnt < 1 or layercnt > 8 or poolcnt <= 0 or idxcnt <= 0:
-            continue
+            return None
         if poolcnt > 500000 or idxcnt > 500000:
-            continue
-        # layer records: layercnt x 0x18 at off+0x10, tri count @ +0x10; the
-        # pool follows the records (off + 0x10 + layercnt*0x18 + 4)
+            return None
         counts = []
-        ok = True
         for i in range(layercnt):
             c = struct.unpack_from(">I", d, off + 0x10 + i * 0x18 + 0x10)[0]
             if c <= 0 or c > 1000000:
-                ok = False
-                break
+                return None
             counts.append(c)
-        if not ok or sum(counts) * 3 != idxcnt:
-            continue
+        if sum(counts) * 3 != idxcnt:
+            return None
         pool_off = off + 0x10 + layercnt * 0x18 + 4
         idx_off = pool_off + poolcnt * 12
         if idx_off + idxcnt * 2 > len(d):
-            continue
-        # sanity: pool[0] must look like a coordinate (small float)
+            return None
         x0, y0, z0 = struct.unpack_from(">fff", d, pool_off)
         if not (-1e6 < x0 < 1e6 and -1e6 < y0 < 1e6 and -1e6 < z0 < 1e6):
-            continue
-        # sanity: idx[0..5] are valid pool indices
+            return None
         i0 = struct.unpack_from(">6H", d, idx_off)
         if max(i0) >= poolcnt:
-            continue
-        best = (off, poolcnt, x, idxcnt, layercnt, pool_off, idx_off)
-        break
-    if best is None:
+            return None
+        return (off, poolcnt, x, idxcnt, layercnt, pool_off, idx_off, counts)
+
+    if not all_resources:
+        best = None
+        for off in range(len(d) - 0x60):
+            h = try_header(off)
+            if h:
+                best = h
+                break
+        if best is None:
+            raise SystemExit(f"collision resource header not found in {path}")
+        off, poolcnt, x, idxcnt, layercnt, pool_off, idx_off, counts = best
+        print(f"header @ {off:#x}: poolcnt={poolcnt} data_len={x} idxcnt={idxcnt} layers={counts}")
+        pool = [struct.unpack_from(">fff", d, pool_off + i * 12) for i in range(poolcnt)]
+        idx = list(struct.unpack_from(">%dH" % idxcnt, d, idx_off))
+        return dict(poolcnt=poolcnt, idxcnt=idxcnt, pool=pool, idx=idx,
+                    counts=counts, data_len=x)
+
+    # merged mode: every resource, concatenated
+    headers = []
+    for off in range(len(d) - 0x60):
+        h = try_header(off)
+        if h:
+            headers.append(h)
+    if not headers:
         raise SystemExit(f"collision resource header not found in {path}")
-    off, poolcnt, x, idxcnt, layercnt, pool_off, idx_off = best
-    print(f"header @ {off:#x}: poolcnt={poolcnt} data_len={x} idxcnt={idxcnt} layers={layercnt}")
-    pool = [struct.unpack_from(">fff", d, pool_off + i * 12) for i in range(poolcnt)]
-    idx = list(struct.unpack_from(">%dH" % idxcnt, d, idx_off))
-    # layer tri counts from the layer records at header+0x10 (0x18 each, count@+0x10)
-    counts = []
-    for i in range(layercnt):
-        rec = off + 0x10 + i * 0x18
-        counts.append(struct.unpack_from(">I", d, rec + 0x10)[0])
-    print(f"layer tri counts: {counts}")
-    return dict(poolcnt=poolcnt, idxcnt=idxcnt, pool=pool, idx=idx,
-                counts=counts, data_len=x)
+    print(f"{len(headers)} collision resources; headers: " +
+          ", ".join(f"{h[0]:#x}(pool={h[1]},L{h[4]}={h[7]})" for h in headers))
+    pool, idx, counts = [], [], []
+    for off, poolcnt, x, idxcnt, layercnt, pool_off, idx_off, c in headers:
+        base = len(pool)
+        pool.extend(struct.unpack_from(">fff", d, pool_off + i * 12) for i in range(poolcnt))
+        idx.extend(base + v for v in struct.unpack_from(">%dH" % idxcnt, d, idx_off))
+        for k, cc in enumerate(c):
+            if k >= len(counts):
+                counts.append(0)
+            counts[k] += cc
+    print(f"merged: pool={len(pool)} idx={len(idx)} layers={counts}")
+    return dict(poolcnt=len(pool), idxcnt=len(idx), pool=pool, idx=idx,
+                counts=counts, data_len=0)
 
 
 def to_viewer_json(world, level="dpl1_c1"):
@@ -119,10 +143,11 @@ def main():
     ap.add_argument("--json", metavar="OUT", help="emit viewer JSON")
     ap.add_argument("--verify", nargs=2, metavar=("POOL_BIN", "IDX_BIN"),
                     help="byte-exact verify vs RAM dump")
+    ap.add_argument("--all", action="store_true", help="merge ALL collision resources (multi-sub-level ntas)")
     ap.add_argument("--diff", metavar="RT_JSON", help="diff vs runtime-dump JSON")
     args = ap.parse_args()
     nta = args.nta or "/home/cyan/code/nicku-mapper/asset-extract/nicku-ntsc/P-GNOE/files/Data/dannyphantomlevel1/AssetsAuto.nta"
-    world = parse_nta(nta)
+    world = parse_nta(nta, all_resources=args.all)
     if args.verify:
         rp = open(args.verify[0], "rb").read()
         ri = open(args.verify[1], "rb").read()

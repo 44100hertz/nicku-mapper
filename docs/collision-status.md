@@ -222,3 +222,28 @@ gracefully skips missing ones (the 6 = no overlay). The level-1 JSON stays
 byte-exact vs the RAM dump. Layer flags/names for 1-2-layer levels = the first
 N of the hardcoded (0x27/0x26/0x7, default/nopathfind/noocclude) — see
 still_hardcoded.md.
+
+## 2025-xx: whole-game fixes — multi-resource merge + the DP2 format found
+
+**User verification (viewer):** DP1/3, JNL, SB2, TT1, TT2 perfect; JN1, SB1,
+SB3 were HALF complete; DP2 = playable with in-game collision; the level-4s +
+TestWorld = boss fights / no collision.
+
+**The "half complete" fix:** multi-sub-level ntas hold ONE collision resource
+per sub-level; the decoder took the first. `nta2json.py --all` now merges
+every resource (pool = concatenation, idx = re-indexed concatenation, layer
+counts summed by position):
+- JN1: 7250+4711+5918+361 = 18240 verts
+- SB1: 12512+26316 = 38828; SB3: 6603+8009+6056+3754 = 24422
+Single-resource levels unchanged; DP1 still byte-exact vs the RAM dump.
+All 9 JSONs regenerated (LOAD_VERSION 21).
+
+**The DP2 format (the playable level with in-game collision):** the active
+level = "DPWorld_Detail_level02_03" (levelnfo) — its .trb = a 139-section
+TSFB: 138 W0C0M display sections + a **"Collision" section** (the last, size
+0x920) whose data = the QUANTIZED AABB-TREE (u16 quantized positions +
+increasing index pairs: 0x6c44, 0x19d, 0x38d0, ...) — the "older" collision
+format the vmtext ray caster (FUN_7f067e60 tree walk) consumes directly
+(no nta pool/idx). The 6 "no-resource" ntas likely all use this trb-based
+tree format (or the entity sections' nested TSFB "Collision" sub-resources).
+Decoding the tree = the next open item (the DP2/4s + the boss levels).
