@@ -13,10 +13,10 @@ plausible bounds, layer-count consistency).
 | dannyphantomlevel1 | 11379 | 5735 / 74 / 182 |
 | dannyphantomlevel3 | 15910 | 8293 / 49 / 350 |
 | JimmyNeutronLab | 6729 | 4320 / 48 |
-| JimmyNeutronLevel1_01 | 7250 | 3398 |
-| SpongeBobLevel1 | 12512 | 6797 / 48 |
+| JimmyNeutronLevel1_01 | 18240 | 3398 / 1999+140+10 / 2728+60 / 152 |
+| SpongeBobLevel1 | 38828 | 6797+14176 / 48+132 |
 | SpongeBobLevel2 | 27492 | 14421 |
-| SpongeBobLevel3 | 6603 | 2649 / 509 |
+| SpongeBobLevel3 | 24422 | 2649+3554+2638+1308 / 509+100+443 |
 | TimmyTurnerLevel1 | 24385 | 10243 / 36 / 464 |
 | TimmyTurnerLevel2 | 25708 | 11732 |
 
