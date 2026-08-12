@@ -1,5 +1,5 @@
 // Screenshot a level mesh with the viewer; used to eyeball geometry decodes.
-//   CHROME=/path/to/chromium node web/shot.mjs [LevelName] [out.png]
+//   CHROME=/path/to/chromium node viewer/shot.mjs [LevelName] [out.png]
 import { spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -70,7 +70,7 @@ const evaluate = async (expr) => {
 await send("Runtime.enable");
 await send("Page.enable");
 const loaded = new Promise((r) => on("Page.loadEventFired", r));
-await send("Page.navigate", { url: `http://127.0.0.1:${PORT}/web/#${LEVEL}` });
+await send("Page.navigate", { url: `http://127.0.0.1:${PORT}/viewer/#${LEVEL}` });
 await loaded;
 
 let status = "";

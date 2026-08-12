@@ -1,7 +1,7 @@
 // End-to-end test for the 3D viewer using CDP over a raw WebSocket
 // (Node >= 21 has a built-in WebSocket client).
 //
-//   CHROME=/path/to/chromium node web/test-e2e.mjs
+//   CHROME=/path/to/chromium node viewer/test-e2e.mjs
 //
 // Launches a static server, loads the viewer, waits for a level, then:
 //   1. checks entity/box/link stats via window.__nickmapper
@@ -99,7 +99,7 @@ const evaluate = async (expr) => {
 await send("Runtime.enable");
 await send("Page.enable");
 const loaded = new Promise((r) => on("Page.loadEventFired", r));
-await send("Page.navigate", { url: `http://127.0.0.1:${PORT}/web/#SpongeBobLevel2` });
+await send("Page.navigate", { url: `http://127.0.0.1:${PORT}/viewer/#SpongeBobLevel2` });
 await loaded;
 
 // wait for level to finish loading

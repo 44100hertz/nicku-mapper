@@ -17,7 +17,7 @@ sleep 0.5
   --headless=new --password-store=basic --no-sandbox --disable-gpu \
   --enable-unsafe-swiftshader --use-angle=swiftshader \
   --virtual-time-budget=20000 --dump-dom \
-  "http://localhost:$PORT/web/" > /tmp/nickmapper-dom.html 2>/tmp/nickmapper-chrome.log
+  "http://localhost:$PORT/viewer/" > /tmp/nickmapper-dom.html 2>/tmp/nickmapper-chrome.log
 
 echo "--- page title (first line) ---"
 grep -o '<title>[^<]*</title>' /tmp/nickmapper-dom.html | head -1

@@ -9,7 +9,7 @@ const collisionGroup = new THREE.Group();
 const meshFacesGroup = new THREE.Group();
 const collFootGroup = new THREE.Group();
 
-const app = readFileSync("web/app.js", "utf8");
+const app = readFileSync("app.js", "utf8");
 function extractFn(name, prefix) {
   const start = app.indexOf(prefix);
   if (start < 0) throw new Error(`${name} not found`);
@@ -63,11 +63,11 @@ collisionGroup.add(meshFacesGroup);
 
 let ok = true;
 const files = [
-  "web/collision/SpongeBobLevel1.json",
-  "web/collision/dannyphantomlevel1.json",
-  "web/collision/TimmyTurnerLevel1.json",
-  "web/collision/JimmyNeutronLevel1_01.json",
-  "web/collision/SpongeBobLevel2.json",
+  "collision/SpongeBobLevel1.json",
+  "collision/dannyphantomlevel1.json",
+  "collision/TimmyTurnerLevel1.json",
+  "collision/JimmyNeutronLevel1_01.json",
+  "collision/SpongeBobLevel2.json",
 ];
 for (let fi = 0; fi < files.length; fi++) {
   if (fi > 0) {
