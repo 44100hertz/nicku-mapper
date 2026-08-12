@@ -11,7 +11,7 @@ Toshi engine's mesh strip walking, to explain the mesh pools found by
 - **ISO**: `nicktoonsunite.iso` (P-GNOE, GCN) lives at
   `games/console (other)/gcn+wii/` on the removable drive — currently mounted
   at
-  `/run/media/samp/787be337-88e4-4b95-92f9-45d37615cd02/games/console (other)/gcn+wii/`
+  `<drive>/games/console (other)/gcn+wii/`
   (the mount point contains the *mounting user's* name, so it can change;
   `NICK_EXTRACT` overrides everything).
 - **The binary to decompile is the COMBINED ELF**: `vmtext_combined.elf` — the

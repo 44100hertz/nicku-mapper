@@ -3,7 +3,7 @@
 Correct mapping: text[1] file 0x4A0 -> RAM 0x800034A0 (size 0x3EFE0)."""
 import os, sys
 
-EXTRACT = os.environ.get("NICK_EXTRACT", "/run/media/samp/787be337-88e4-4b95-92f9-45d37615cd02/games/console (other)/gcn+wii/extract")
+EXTRACT = os.environ.get("NICK_EXTRACT", "")
 d = open(os.path.join(EXTRACT, "nicku-ntsc", "P-GNOE", "sys", "main.dol"), "rb").read()
 
 SECTS = [(0x100, 0x80003100, 0x3A0), (0x4A0, 0x800034A0, 0x3EFE0),

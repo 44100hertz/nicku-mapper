@@ -11,7 +11,7 @@ Usage (needs capstone: `nix-shell -p python3Packages.capstone`):
 import struct
 import sys
 
-DOL_DEFAULT = "/run/media/samp/787be337-88e4-4b95-92f9-45d37615cd02/games/console (other)/gcn+wii/extract/nicku-ntsc/P-GNOE/sys/main.dol"
+DOL_DEFAULT = "/PATH/TO/extract/nicku-ntsc/P-GNOE/sys/main.dol"
 
 
 def load_sections(path):

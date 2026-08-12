@@ -20,7 +20,7 @@ cracked the TRB/DOL formats and the one-off image helpers.
 
 Scripts that read game data default to the mounted disc-extract root:
 
-    /run/media/samp/787be337-88e4-4b95-92f9-45d37615cd02/games/console (other)/gcn+wii/extract
+    <extract-root>
 
 Override it with `NICK_EXTRACT=/path/to/extract` when the drive is mounted
 elsewhere. The repo's `asset-extract` symlink points at the same tree

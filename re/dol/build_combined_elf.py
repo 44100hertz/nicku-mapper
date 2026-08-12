@@ -27,7 +27,7 @@ import sys
 
 EXTRACT = os.environ.get(
     "NICK_EXTRACT",
-    "/run/media/samp/787be337-88e4-4b95-92f9-45d37615cd02/games/console (other)/gcn+wii/extract",
+    "/PATH/TO/extract",
 )
 
 

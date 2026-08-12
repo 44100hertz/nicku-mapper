@@ -10,7 +10,7 @@ y = b * yscale).
 import struct
 import sys
 
-P = "/run/media/samp/787be337-88e4-4b95-92f9-45d37615cd02/games/console (other)/gcn+wii/extract/nicku-ntsc/P-GNOE/files/Data/SpongeBobLevel1/SBWorld_Detail_Level01_01.trb"
+P = "/PATH/TO/extract/nicku-ntsc/P-GNOE/files/Data/SpongeBobLevel1/SBWorld_Detail_Level01_01.trb"
 YSCALE = 0.125
 
 

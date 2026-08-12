@@ -2,7 +2,7 @@
 """Scan for the global position pool referenced by u16 posIdx."""
 import os, struct
 
-EXTRACT = os.environ.get("NICK_EXTRACT", "/run/media/samp/787be337-88e4-4b95-92f9-45d37615cd02/games/console (other)/gcn+wii/extract")
+EXTRACT = os.environ.get("NICK_EXTRACT", "")
 
 PATH = os.path.join(EXTRACT, "nicku-ntsc", "P-GNOE", "files", "Data", "SpongeBobLevel1", "SBWorld_Detail_Level01_01.trb")
 d = open(PATH, "rb").read()

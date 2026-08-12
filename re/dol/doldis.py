@@ -1,6 +1,6 @@
 import os, sys
 
-EXTRACT = os.environ.get("NICK_EXTRACT", "/run/media/samp/787be337-88e4-4b95-92f9-45d37615cd02/games/console (other)/gcn+wii/extract")
+EXTRACT = os.environ.get("NICK_EXTRACT", "")
 from capstone import *
 d = open(os.path.join(EXTRACT, "nicku-ntsc", "P-GNOE", "sys", "main.dol"), "rb").read()
 # text sections per parent notes: file offsets -> RAM

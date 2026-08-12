@@ -2,7 +2,7 @@
 """Find all callers of a RAM target in main.dol (scan text sections for 'bl target')."""
 import os, sys
 
-EXTRACT = os.environ.get("NICK_EXTRACT", "/run/media/samp/787be337-88e4-4b95-92f9-45d37615cd02/games/console (other)/gcn+wii/extract")
+EXTRACT = os.environ.get("NICK_EXTRACT", "")
 d = open(os.path.join(EXTRACT, "nicku-ntsc", "P-GNOE", "sys", "main.dol"), "rb").read()
 
 # (file_off, ram) per doldis.py

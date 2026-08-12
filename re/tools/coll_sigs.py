@@ -3,7 +3,7 @@
 import struct, sys
 
 TRB = sys.argv[1] if len(sys.argv) > 1 else \
-    "/run/media/samp/787be337-88e4-4b95-92f9-45d37615cd02/games/console (other)/gcn+wii/extract/nicku-ntsc/P-GNOE/files/Data/dannyphantomlevel1/DPWorld_Level04_01_Detail.trb"
+    "/PATH/TO/extract/nicku-ntsc/P-GNOE/files/Data/dannyphantomlevel1/DPWorld_Level04_01_Detail.trb"
 
 d = open(TRB, "rb").read()
 assert d[:4] == b"TSFB", d[:4]

@@ -2,7 +2,7 @@
 """w4r: dump indexed-array + draw GX functions."""
 import os, sys, re
 
-EXTRACT = os.environ.get("NICK_EXTRACT", "/run/media/samp/787be337-88e4-4b95-92f9-45d37615cd02/games/console (other)/gcn+wii/extract")
+EXTRACT = os.environ.get("NICK_EXTRACT", "")
 sys.path.insert(0, os.path.join(EXTRACT, "tools"))
 from dol import Dol
 from capstone import Cs, CS_ARCH_PPC, CS_MODE_BIG_ENDIAN
